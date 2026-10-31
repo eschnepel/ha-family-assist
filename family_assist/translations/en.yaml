@@ -1,0 +1,31 @@
+configuration:
+  ollama_url:
+    name: Ollama URL
+    description: Base URL of the Ollama server, for example http://192.168.1.20:11434
+  ollama_api_key:
+    name: Ollama API key
+    description: Optional. Sent as a bearer token to Ollama only.
+  default_model:
+    name: Default model
+    description: Must support tool calling.
+  vision_model:
+    name: Vision model
+    description: Optional model used when a message contains photos.
+  num_ctx:
+    name: Context size
+    description: Context window (tokens) requested from Ollama.
+  sync_interval_minutes:
+    name: Sync interval (minutes)
+    description: Periodic pull of the Agent Environment; 0 disables.
+  queue_enabled:
+    name: Generation queue
+    description: Queue generations (FIFO). When off, requests go straight to Ollama.
+  max_parallel_generations:
+    name: Parallel generations
+    description: How many generations may run at once when the queue is enabled.
+  max_tool_calls_per_turn:
+    name: Tool calls per turn
+    description: Upper limit of tool calls in one assistant turn.
+  max_tool_result_kb:
+    name: Tool result size (KB)
+    description: Upper limit for the result of one tool call.

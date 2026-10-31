@@ -1,0 +1,31 @@
+configuration:
+  ollama_url:
+    name: Ollama-URL
+    description: Basis-URL des Ollama-Servers, zum Beispiel http://192.168.1.20:11434
+  ollama_api_key:
+    name: Ollama-API-Schlüssel
+    description: Optional. Wird nur als Bearer-Token an Ollama gesendet.
+  default_model:
+    name: Standardmodell
+    description: Muss Werkzeugaufrufe (Tool Calling) unterstützen.
+  vision_model:
+    name: Bildmodell
+    description: Optionales Modell für Nachrichten mit Fotos.
+  num_ctx:
+    name: Kontextgröße
+    description: Kontextfenster (Token), das bei Ollama angefordert wird.
+  sync_interval_minutes:
+    name: Synchronisationsintervall (Minuten)
+    description: Regelmäßiges Aktualisieren der Agent-Umgebung; 0 deaktiviert es.
+  queue_enabled:
+    name: Warteschlange für Antworten
+    description: Antworten der Reihe nach (FIFO) erzeugen. Ausgeschaltet gehen Anfragen direkt an Ollama.
+  max_parallel_generations:
+    name: Parallele Antworten
+    description: Wie viele Antworten gleichzeitig laufen dürfen, wenn die Warteschlange aktiv ist.
+  max_tool_calls_per_turn:
+    name: Werkzeugaufrufe pro Durchgang
+    description: Obergrenze für Werkzeugaufrufe in einem Durchgang des Assistenten.
+  max_tool_result_kb:
+    name: Größe des Werkzeugergebnisses (KB)
+    description: Obergrenze für das Ergebnis eines einzelnen Werkzeugaufrufs.
