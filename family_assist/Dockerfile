@@ -1,7 +1,7 @@
 ARG BUILD_FROM
 FROM ${BUILD_FROM}
 
-RUN apk add --no-cache python3 py3-pip git
+RUN apk add --no-cache python3 py3-pip git github-cli
 
 COPY requirements.txt /tmp/requirements.txt
 RUN python3 -m venv /opt/venv \

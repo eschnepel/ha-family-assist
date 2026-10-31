@@ -98,6 +98,7 @@ class Settings:
     allow_commits: bool = False
     allow_push: bool = False
     aliases: dict[str, str] = field(default_factory=dict)
+    auth_method: str = "token"  # token | github_cli
 
 
 class SettingsStore:

@@ -8,6 +8,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 COMMITTER_NAME = "Family Assist"
 COMMITTER_EMAIL = "family-assist@localhost"
@@ -36,16 +37,19 @@ class AgentEnvironment:
         self._pending: set[str] = set()
         self._url = ""
         self._branch = "main"
-        self._token = ""
+        self._token: str | Callable[[], str] = ""
         self.last_sync: float | None = None
         self.last_error: str | None = None
         self.diverged = False
 
     # --- configuration ---------------------------------------------------
 
-    def configure(self, url: str, branch: str, token: str) -> None:
+    def configure(self, url: str, branch: str, token: str | Callable[[], str]) -> None:
         with self._lock:
             self._url, self._branch, self._token = url, branch, token
+
+    def _current_token(self) -> str:
+        return (self._token() if callable(self._token) else self._token) or ""
 
     @property
     def configured(self) -> bool:
@@ -56,7 +60,7 @@ class AgentEnvironment:
 
     # --- git plumbing ----------------------------------------------------
 
-    def _env(self) -> dict[str, str]:
+    def _env(self, token: str) -> dict[str, str]:
         keep = ("PATH", "HOME", "LANG", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "TMPDIR")
         env = {k: os.environ[k] for k in keep if k in os.environ}
         env.update(
@@ -69,8 +73,8 @@ class AgentEnvironment:
             GIT_COMMITTER_NAME=COMMITTER_NAME,
             GIT_COMMITTER_EMAIL=COMMITTER_EMAIL,
         )
-        if self._token:
-            basic = base64.b64encode(f"x-access-token:{self._token}".encode()).decode()
+        if token:
+            basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
             env.update(
                 GIT_CONFIG_COUNT="1",
                 GIT_CONFIG_KEY_0="http.extraHeader",
@@ -85,7 +89,8 @@ class AgentEnvironment:
         for name in self._extra_protocols:
             protocols += ["-c", f"protocol.{name}.allow=always"]
         cmd = ["git", "-c", f"core.hooksPath={os.devnull}", "-c", "credential.helper=", *protocols, *args]
-        env = self._env()
+        token = self._current_token()
+        env = self._env(token)
         if env_extra:
             env.update(env_extra)
         try:
@@ -99,8 +104,8 @@ class AgentEnvironment:
             raise GitError(f"cannot run git: {exc}") from None
         if check and proc.returncode != 0:
             message = (proc.stderr or proc.stdout or "").strip()
-            if self._token:
-                message = message.replace(self._token, "***")
+            if token:
+                message = message.replace(token, "***")
             raise GitError(message[-500:] or f"git {args[0]} failed")
         return proc.stdout.strip()
 

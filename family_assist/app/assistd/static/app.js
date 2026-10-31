@@ -23,6 +23,10 @@ const TEXT = {
     vision: "vision", unknown: "unknown", rules: "Rules from the repository (read-only)",
     hidden: "Hidden", readonly: "Read-only", enabledTools: "Enabled tools", none: "none", warnings: "Warnings",
     queue: "Queue", running: "running", waiting: "waiting", diagramError: "The diagram could not be rendered.",
+    authMethod: "Access to the repository", authToken: "Access token", authGh: "GitHub CLI sign-in",
+    ghLogin: "Sign in with GitHub", ghLogout: "Sign out", ghLoggedIn: (n) => `Signed in to GitHub as ${n}.`,
+    ghStep1: "Open", ghStep2: "and enter this code:", ghMissing: "The GitHub CLI is not installed in this add-on.",
+    ghScopeNote: "GitHub CLI sign-in grants access to all repositories of that GitHub account. For a single repository use a fine-grained access token instead.",
   },
   de: {
     newChat: "Neuer Chat", send: "Senden", attach: "Foto", placeholder: "Nachricht schreiben...",
@@ -46,6 +50,10 @@ const TEXT = {
     vision: "Bilder", unknown: "unbekannt", rules: "Regeln aus dem Repository (nur lesbar)",
     hidden: "Versteckt", readonly: "Schreibgeschützt", enabledTools: "Aktive Werkzeuge", none: "keine", warnings: "Warnungen",
     queue: "Warteschlange", running: "läuft", waiting: "wartet", diagramError: "Das Diagramm konnte nicht dargestellt werden.",
+    authMethod: "Zugriff auf das Repository", authToken: "Zugriffstoken", authGh: "Anmeldung mit der GitHub CLI",
+    ghLogin: "Bei GitHub anmelden", ghLogout: "Abmelden", ghLoggedIn: (n) => `Bei GitHub angemeldet als ${n}.`,
+    ghStep1: "Öffne", ghStep2: "und gib diesen Code ein:", ghMissing: "Die GitHub CLI ist in diesem Add-on nicht installiert.",
+    ghScopeNote: "Die Anmeldung mit der GitHub CLI gibt Zugriff auf alle Repositories dieses GitHub-Kontos. Für ein einzelnes Repository nimm stattdessen ein fein abgestuftes Zugriffstoken.",
   },
 };
 
@@ -441,6 +449,34 @@ function chatView() {
 function fmtTime(ts) { return ts ? new Date(ts * 1000).toLocaleString(lang) : t("never"); }
 const yesNo = (v) => (v === null || v === undefined ? t("unknown") : v ? t("yes") : t("no"));
 
+function githubPanel() {
+  const box = h("div", { class: "gh" });
+  let timer = null;
+  const show = (err) => box.replaceChildren(h("div", { class: "meta err" }, err.message));
+  const call = async (path, method) => (await api(path, method ? { method } : {})).json();
+  const render = (s) => {
+    clearTimeout(timer);
+    const kids = [];
+    if (!s.available) {
+      kids.push(h("div", { class: "meta err" }, t("ghMissing")));
+    } else if (s.logged_in) {
+      kids.push(h("div", {}, t("ghLoggedIn", s.account || "?")),
+        h("button", { type: "button", class: "secondary", onclick: () => call("admin/github/logout", "POST").then(render, show) }, t("ghLogout")));
+    } else if (s.login.state === "pending" && s.login.code) {
+      kids.push(h("div", {}, t("ghStep1"), " ", h("a", { href: s.login.url, target: "_blank", rel: "noopener noreferrer" }, s.login.url)),
+        h("div", {}, t("ghStep2")), h("div", { class: "code" }, s.login.code));
+      timer = setTimeout(refresh, 3000);
+    } else {
+      if (s.login.state === "failed") kids.push(h("div", { class: "meta err" }, s.login.error || ""));
+      kids.push(h("button", { type: "button", onclick: () => call("admin/github/login", "POST").then(render, show) }, t("ghLogin")));
+    }
+    box.replaceChildren(...kids);
+  };
+  const refresh = () => (box.isConnected ? call("admin/github").then(render, show) : null);
+  call("admin/github").then(render, show);
+  return box;
+}
+
 async function adminView() {
   const [settings, status, family] = await Promise.all([
     api("admin/settings").then((r) => r.json()),
@@ -450,6 +486,15 @@ async function adminView() {
   const url = h("input", { type: "text", value: settings.repo_url, autocomplete: "off" });
   const branch = h("input", { type: "text", value: settings.branch });
   const token = h("input", { type: "password", autocomplete: "new-password" });
+  const method = h("select", {},
+    h("option", { value: "token", selected: settings.auth_method === "token" }, t("authToken")),
+    h("option", { value: "github_cli", selected: settings.auth_method === "github_cli" }, t("authGh")));
+  const tokenBox = h("div", {}, h("label", {}, t("token")), token,
+    h("div", { class: "meta" }, settings.has_token ? t("tokenSet") : t("tokenNone")));
+  const ghBox = h("div", {}, githubPanel(), h("div", { class: "meta warn" }, t("ghScopeNote")));
+  const showMethod = () => { tokenBox.hidden = method.value !== "token"; ghBox.hidden = method.value !== "github_cli"; };
+  method.addEventListener("change", showMethod);
+  showMethod();
   const commits = h("input", { type: "checkbox", checked: settings.allow_commits });
   const push = h("input", { type: "checkbox", checked: settings.allow_push });
   const aliasInputs = family.map((u) => ({ u, input: h("input", { type: "text", value: u.alias }) }));
@@ -467,8 +512,7 @@ async function adminView() {
     h("h2", {}, t("settings")),
     h("label", {}, t("repoUrl")), url,
     h("label", {}, t("branch")), branch,
-    h("label", {}, t("token")), token,
-    h("div", { class: "meta" }, settings.has_token ? t("tokenSet") : t("tokenNone")),
+    h("label", {}, t("authMethod")), method, tokenBox, ghBox,
     h("label", {}, commits, " ", t("allowCommits")),
     h("label", {}, push, " ", t("allowPush")),
     h("h2", {}, t("aliases")),
@@ -479,7 +523,7 @@ async function adminView() {
         for (const { u, input } of aliasInputs) if (input.value.trim() && input.value.trim() !== u.name) aliases[u.id] = input.value.trim();
         await api("admin/settings", { method: "PUT", body: {
           repo_url: url.value, branch: branch.value, allow_commits: commits.checked, allow_push: push.checked,
-          aliases, git_token: token.value ? token.value : null } });
+          aliases, auth_method: method.value, git_token: token.value ? token.value : null } });
       }) }, t("save")),
       h("button", { type: "button", class: "secondary", onclick: act(() => api("admin/sync", { method: "POST" })) }, t("sync")),
       h("button", { type: "button", class: "secondary", onclick: act(() => api("admin/push", { method: "POST" })) }, t("push")),

@@ -9,6 +9,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .agent import Deps, Principal, read_root_agents, run_turn
 from .config import Settings, ValidationError, clean_alias, validate_branch, validate_repo_url
+from .ghcli import GhError
 from .gitenv import BusyError, GitError
 from .identity import HAUser, UserDirectory, UserDirectoryError
 from .rules import Rules
@@ -57,6 +59,7 @@ class SettingsIn(BaseModel):
     allow_commits: bool
     allow_push: bool
     aliases: dict[str, str] = Field(default_factory=dict)
+    auth_method: Literal["token", "github_cli"] = "token"
     git_token: str | None = Field(default=None, max_length=500)
 
 
@@ -88,11 +91,12 @@ class State:
 def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, background: bool = True,
                dev_user: str = "") -> FastAPI:
     state = State(deps, users, dev)
-    env, settings_store = deps.env, deps.settings
+    env, settings_store, gh = deps.env, deps.settings, deps.gh
 
     def apply_settings() -> Settings:
         settings = settings_store.get()
-        env.configure(settings.repo_url, settings.branch, settings_store.git_token())
+        token = gh.token if gh and settings.auth_method == "github_cli" else settings_store.git_token()
+        env.configure(settings.repo_url, settings.branch, token)
         return settings
 
     async def sync_now() -> None:
@@ -116,11 +120,15 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     @contextlib.asynccontextmanager
     async def lifespan(_app: FastAPI):
         apply_settings()
+        if gh:
+            gh.on_success = lambda: spawn(sync_now()) if env.configured else None
         if background and env.configured:
             spawn(periodic_sync())
         yield
         for task in list(state.tasks):
             task.cancel()
+        if gh:
+            await gh.cancel()
         await deps.ollama.aclose()
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -245,7 +253,8 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     def settings_payload() -> dict:
         s = settings_store.get()
         return {"repo_url": s.repo_url, "branch": s.branch, "allow_commits": s.allow_commits,
-                "allow_push": s.allow_push, "aliases": s.aliases, "has_token": bool(settings_store.git_token())}
+                "allow_push": s.allow_push, "aliases": s.aliases, "auth_method": s.auth_method,
+                "has_token": bool(settings_store.git_token())}
 
     @app.get("/api/admin/settings")
     async def get_settings(c: Ctx = Depends(admin)):
@@ -260,13 +269,39 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         old = settings_store.get()
         old_token = settings_store.git_token()
         aliases = {k[:64]: a for k, v in body.aliases.items() if (a := clean_alias(v))}
-        settings_store.save(Settings(url, branch, body.allow_commits, body.allow_push, aliases))
+        settings_store.save(Settings(url, branch, body.allow_commits, body.allow_push, aliases,
+                                     auth_method=body.auth_method))
         if body.git_token is not None:
             settings_store.set_git_token(body.git_token)
         new = apply_settings()
-        if url and (new.repo_url, new.branch, settings_store.git_token()) != (old.repo_url, old.branch, old_token):
+        changed = (new.repo_url, new.branch, new.auth_method, settings_store.git_token()) != (
+            old.repo_url, old.branch, old.auth_method, old_token)
+        if url and changed:
             spawn(sync_now())
         return settings_payload()
+
+    @app.get("/api/admin/github")
+    async def github_status(c: Ctx = Depends(admin)):
+        if gh is None:
+            return {"available": False, "logged_in": False, "account": "", "login": {"state": "idle"}}
+        return await gh.status()
+
+    @app.post("/api/admin/github/login")
+    async def github_login(c: Ctx = Depends(admin)):
+        if gh is None:
+            raise HTTPException(503, "The GitHub CLI is not available")
+        try:
+            await gh.start_login()
+        except GhError as exc:
+            raise HTTPException(503, str(exc)) from None
+        return await gh.status()
+
+    @app.post("/api/admin/github/logout")
+    async def github_logout(c: Ctx = Depends(admin)):
+        if gh is None:
+            raise HTTPException(503, "The GitHub CLI is not available")
+        await gh.logout()
+        return await gh.status()
 
     @app.post("/api/admin/sync")
     async def sync_endpoint(c: Ctx = Depends(admin)):

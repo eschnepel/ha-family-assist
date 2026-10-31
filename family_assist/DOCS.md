@@ -6,6 +6,8 @@ A chat assistant for the family, backed by Ollama. Its behaviour and files come 
 
 1. Set `ollama_url` (and `ollama_api_key` if your Ollama needs one) and `default_model` in the add-on options. The model must support tool calling.
 2. Open Family Assist, go to **Admin**, enter the repository URL (https), the branch and, for private repositories, an access token. Save; the first Sync starts automatically.
+
+   Instead of a token you can choose **GitHub CLI sign-in**: click *Sign in with GitHub*, open the shown link and enter the code. Note that this grants access to all repositories of that GitHub account; a fine-grained token limited to the one repository is the narrower choice.
 3. Optionally enable **Commit Permission** (the assistant may change files; every changed turn becomes a commit) and **Push Permission**.
 
 ## Rules inside the repository

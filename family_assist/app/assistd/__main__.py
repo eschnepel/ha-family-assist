@@ -8,6 +8,7 @@ import uvicorn
 from .agent import Deps
 from .config import DATA_DIR, SettingsStore, load_options
 from .genqueue import GenerationQueue
+from .ghcli import GitHubCli
 from .gitenv import AgentEnvironment
 from .identity import HAUser, StaticUsers, SupervisorUsers
 from .ollama import OllamaClient
@@ -25,6 +26,7 @@ def build_app():
         ollama=OllamaClient(options.ollama_url, options.ollama_api_key),
         store=ConversationStore(DATA_DIR / "conversations"),
         queue=GenerationQueue(options.queue_enabled, options.max_parallel_generations),
+        gh=GitHubCli(DATA_DIR / "gh"),
     )
     if dev:
         users = StaticUsers([HAUser("dev-admin", "Dev Admin", True), HAUser("dev-kid", "Dev Kid", False)])

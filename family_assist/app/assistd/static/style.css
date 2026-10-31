@@ -52,5 +52,6 @@ details.tool pre { max-height: 14em; overflow: auto; margin: 4px 0; white-space:
 .admin table { width: 100%; border-collapse: collapse; }
 .admin td { padding: 2px 4px; }
 .admin ul { margin: 0; padding-left: 20px; }
+.admin .code { font: 600 28px/1.4 ui-monospace, monospace; letter-spacing: .15em; margin: 6px 0; user-select: all; }
 .row-actions { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 @media (max-width: 640px) { aside { width: 120px; } }

@@ -10,8 +10,9 @@ from typing import AsyncIterator
 import yaml
 
 from .config import Options, SettingsStore
-from .gitenv import AgentEnvironment, GitError
 from .genqueue import GenerationQueue
+from .ghcli import GitHubCli
+from .gitenv import AgentEnvironment, GitError
 from .ollama import OllamaClient, OllamaError
 from .rules import Rules
 from .store import ConversationStore
@@ -49,6 +50,7 @@ class Deps:
     ollama: OllamaClient
     store: ConversationStore
     queue: GenerationQueue
+    gh: GitHubCli | None = None
 
 
 @dataclass(frozen=True)
