@@ -60,6 +60,35 @@ def test_denied_and_timed_out_logins_fail_cleanly(tmp_path):
     asyncio.run(go())
 
 
+def test_flags_missing_in_an_older_gh_are_not_passed(tmp_path):
+    async def go():
+        env = {"FAKE_GH_UNSUPPORTED": "--insecure-storage,--skip-ssh-key"}
+        gh = make_gh(tmp_path, extra_env=env)
+        started = await gh.start_login()
+        assert started["state"] == "pending" and started["code"] == "ABCD-1234"
+        await gh.cancel()
+    asyncio.run(go())
+
+
+def test_gh_flag_error_is_shown_without_the_usage_text(tmp_path):
+    async def go():
+        gh = make_gh(tmp_path, extra_env={"FAKE_GH_UNSUPPORTED": "--web"})
+        await gh.start_login()
+        await wait_for(lambda: gh.login.state == "failed")
+        assert gh.login.error == "unknown flag: --web"
+        assert "with-token" not in gh.login.error
+    asyncio.run(go())
+
+
+def test_error_summary_keeps_the_message_and_drops_usage():
+    from assistd.ghcli import error_summary
+    usage = "unknown flag: --x\n\nUsage:\n  gh auth login [flags]\n\nFlags:\n  --with-token  Read token\n"
+    assert error_summary(usage) == "unknown flag: --x"
+    assert error_summary("a\nb\nauthorization denied\n") == "b | authorization denied"
+    assert error_summary("") == "Sign-in failed"
+    assert error_summary("Usage: gh\n  --with-token  Read token") == "Usage: gh"
+
+
 def test_new_login_replaces_a_pending_one(tmp_path):
     async def go():
         gh = make_gh(tmp_path)

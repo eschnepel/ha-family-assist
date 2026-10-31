@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -10,11 +11,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+log = logging.getLogger(__name__)
+
 HOST = "github.com"
 DEVICE_URL = "https://github.com/login/device"
 _CODE_RE = re.compile(r"\b[A-Z0-9]{4}-[A-Z0-9]{4}\b")
 _ACCOUNT_RE = re.compile(r"account\s+(\S+)")
+_FLAG_RE = re.compile(r"--[a-z][a-z-]*")
+_USAGE_START = re.compile(r"^\s*(usage|flags|options|inherited flags|examples?)\b", re.IGNORECASE)
 _TOKEN_CACHE_SECONDS = 30.0
+# Flags that older gh versions lack; passed only when the installed gh lists them.
+_OPTIONAL_LOGIN_FLAGS = (("--git-protocol", "https"), ("--insecure-storage",), ("--skip-ssh-key",))
+
+
+def error_summary(output: str) -> str:
+    """The error message of a failed gh run without the usage text that gh appends to flag errors."""
+    lines = []
+    for line in output.splitlines():
+        if _USAGE_START.match(line):
+            break
+        if line.strip():
+            lines.append(line.strip())
+    if not lines:
+        lines = [ln.strip() for ln in output.splitlines() if ln.strip()][:1]
+    return " | ".join(lines[-2:])[:200] or "Sign-in failed"
 
 
 class GhError(Exception):
@@ -31,10 +51,12 @@ class LoginState:
 class GitHubCli:
     """Signs in to GitHub with the `gh` CLI (device flow) and hands out its token to git."""
 
-    def __init__(self, config_dir: Path, *, command: tuple[str, ...] = ("gh",), login_timeout: float = 900.0):
+    def __init__(self, config_dir: Path, *, command: tuple[str, ...] = ("gh",), login_timeout: float = 900.0,
+                 extra_env: dict[str, str] | None = None):
         self.config_dir = config_dir
         self._command = tuple(command)
         self._login_timeout = login_timeout
+        self._extra_env = dict(extra_env or {})
         self.login = LoginState()
         self.on_success: Callable[[], None] | None = None
         self._proc: asyncio.subprocess.Process | None = None
@@ -51,6 +73,7 @@ class GitHubCli:
         self.config_dir.mkdir(parents=True, exist_ok=True)
         env.update(GH_CONFIG_DIR=str(self.config_dir), HOME=str(self.config_dir), GH_PROMPT_DISABLED="1",
                    NO_COLOR="1", GH_NO_UPDATE_NOTIFIER="1", GH_NO_EXTENSION_UPDATE_NOTIFIER="1")
+        env.update(self._extra_env)
         return env
 
     def _run(self, *args: str, timeout: float = 15.0) -> subprocess.CompletedProcess:
@@ -94,15 +117,27 @@ class GitHubCli:
     def _login_info(self) -> dict:
         return {"state": self.login.state, "code": self.login.code, "url": DEVICE_URL, "error": self.login.error}
 
+    def _login_args(self) -> list[str]:
+        args = ["auth", "login", "--hostname", HOST, "--web"]
+        try:
+            help_text = self._run("auth", "login", "--help").stdout
+        except (OSError, subprocess.TimeoutExpired):
+            help_text = ""
+        supported = set(_FLAG_RE.findall(help_text))
+        for flag, *value in _OPTIONAL_LOGIN_FLAGS:
+            if not supported or flag in supported:
+                args += [flag, *value]
+        return args
+
     async def start_login(self) -> dict:
         if not self.available:
             raise GhError("The GitHub CLI is not installed")
         await self.cancel()
         self.login = LoginState("pending")
+        args = await asyncio.to_thread(self._login_args)
         try:
             self._proc = await asyncio.create_subprocess_exec(
-                *self._command, "auth", "login", "--hostname", HOST, "--git-protocol", "https", "--web",
-                "--insecure-storage", "--skip-ssh-key", env=self._env(), stdin=asyncio.subprocess.DEVNULL,
+                *self._command, *args, env=self._env(), stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         except OSError as exc:
             self.login = LoginState("failed", error=f"Cannot start the GitHub CLI: {exc}"[:200])
@@ -144,8 +179,8 @@ class GitHubCli:
             if self.on_success:
                 self.on_success()
         else:
-            lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
-            login.state, login.error = "failed", (lines[-1] if lines else "Sign-in failed")[:200]
+            log.warning("gh auth login failed (exit %s): %s", proc.returncode, output.strip()[-2000:])
+            login.state, login.error = "failed", error_summary(output)
 
     async def cancel(self) -> None:
         task, self._task = self._task, None
