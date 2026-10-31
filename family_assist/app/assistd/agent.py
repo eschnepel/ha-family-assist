@@ -203,7 +203,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                         result += f"\n\n[Additional instructions from {folder}]\n{extra}"
                 changed.extend(outcome.changed)
                 entry = {"name": name, "args": args if isinstance(args, dict) else {}, "result": result,
-                         "ok": outcome.ok}
+                         "ok": outcome.ok, "changed": list(outcome.changed)}
                 assistant["tools"].append(entry)
                 yield {"type": "tool", **entry}
                 messages.append({"role": "tool", "tool_name": name, "content": result})

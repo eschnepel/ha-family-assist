@@ -23,6 +23,7 @@ const TEXT = {
     vision: "vision", unknown: "unknown", rules: "Rules from the repository (read-only)",
     hidden: "Hidden", readonly: "Read-only", enabledTools: "Enabled tools", none: "none", warnings: "Warnings",
     queue: "Queue", running: "running", waiting: "waiting", diagramError: "The diagram could not be rendered.",
+    exportChat: "Download conversation", filesChanged: "Files:",
     authMethod: "Access to the repository", authToken: "Access token", authGh: "GitHub CLI sign-in",
     ghLogin: "Sign in with GitHub", ghLogout: "Sign out", ghLoggedIn: (n) => `Signed in to GitHub as ${n}.`,
     ghStep1: "Open", ghStep2: "and enter this code:", ghMissing: "The GitHub CLI is not installed in this add-on.",
@@ -50,6 +51,7 @@ const TEXT = {
     vision: "Bilder", unknown: "unbekannt", rules: "Regeln aus dem Repository (nur lesbar)",
     hidden: "Versteckt", readonly: "Schreibgeschützt", enabledTools: "Aktive Werkzeuge", none: "keine", warnings: "Warnungen",
     queue: "Warteschlange", running: "läuft", waiting: "wartet", diagramError: "Das Diagramm konnte nicht dargestellt werden.",
+    exportChat: "Unterhaltung herunterladen", filesChanged: "Dateien:",
     authMethod: "Zugriff auf das Repository", authToken: "Zugriffstoken", authGh: "Anmeldung mit der GitHub CLI",
     ghLogin: "Bei GitHub anmelden", ghLogout: "Abmelden", ghLoggedIn: (n) => `Bei GitHub angemeldet als ${n}.`,
     ghStep1: "Öffne", ghStep2: "und gib diesen Code ein:", ghMissing: "Die GitHub CLI ist in diesem Add-on nicht installiert.",
@@ -291,6 +293,23 @@ function toolBlock(entry) {
     h("pre", {}, args + "\n--- " + t("result") + " ---\n" + entry.result));
 }
 
+async function saveFile(path, fallbackName) {
+  try {
+    const res = await api(path);
+    const disposition = res.headers.get("Content-Disposition") || "";
+    const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/);
+    const name = encoded ? decodeURIComponent(encoded[1]) : fallbackName;
+    const url = URL.createObjectURL(await res.blob());
+    const link = h("a", { href: url, download: name });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 function commitLine(c) {
   if (!c) return null;
   if (c.error) return h("div", { class: "meta err" }, `${c.commit ? t("commitDone") : t("commitFailed")}: ${c.error}`);
@@ -313,6 +332,11 @@ function messageEl(m) {
   if (m.error) el.append(h("div", { class: "err" }, m.error));
   const c = commitLine(m.commit);
   if (c) el.append(c);
+  const files = [...new Set((m.tools || []).filter((e) => e.ok).flatMap((e) => e.changed || []))];
+  if (files.length) {
+    el.append(h("div", { class: "files" }, h("span", { class: "meta" }, t("filesChanged") + " "), files.map((p) =>
+      h("button", { type: "button", class: "secondary small", title: p, onclick: () => saveFile(`conversations/${current.id}/files/${p.split("/").map(encodeURIComponent).join("/")}`, p.split("/").pop()) }, p.split("/").pop()))));
+  }
   return el;
 }
 
@@ -441,7 +465,8 @@ function chatView() {
     box,
     h("div", { class: "composer" }, previews,
       h("div", { class: "row" }, input, attachBtn, sendBtn, fileInput),
-      h("div", { class: "row" }, h("span", { class: "meta" }, t("notice")), status)));
+      h("div", { class: "row" }, h("span", { class: "meta" }, t("notice")), status,
+        h("button", { type: "button", class: "secondary small", onclick: () => current && saveFile(`conversations/${current.id}/export`, "conversation.md") }, t("exportChat")))));
 }
 
 // --- admin view --------------------------------------------------------------

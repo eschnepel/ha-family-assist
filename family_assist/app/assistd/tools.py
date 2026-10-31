@@ -451,6 +451,13 @@ class Sandbox:
 
     # --- instructions in subfolders -------------------------------------
 
+    def locate_file(self, path: str, max_bytes: int = 5 * 1024 * 1024) -> Path:
+        """Real path of a visible regular file inside the checkout, for downloads."""
+        target, _ = self._resolve(path)
+        if not target.is_file() or target.stat().st_size > max_bytes:
+            raise self._not_found(path)
+        return target
+
     def read_instructions(self, rel_dir: str) -> str | None:
         """Text of `<rel_dir>/AGENTS.md` if it is visible and readable."""
         try:

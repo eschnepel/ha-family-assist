@@ -4,15 +4,17 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import datetime as dt
 import json
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -22,7 +24,7 @@ from .ghcli import GhError
 from .gitenv import BusyError, GitError
 from .identity import HAUser, UserDirectory, UserDirectoryError
 from .rules import Rules
-from .tools import effective_tools, unknown_tool_names
+from .tools import Sandbox, ToolError, effective_tools, unknown_tool_names
 
 log = logging.getLogger(__name__)
 
@@ -242,6 +244,70 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"X-Accel-Buffering": "no"})
+
+    def changed_files(conv: dict) -> list[str]:
+        """Paths the assistant wrote in this conversation; the only files offered for download."""
+        seen: dict[str, None] = {}
+        for message in conv["messages"]:
+            for entry in message.get("tools", []):
+                if entry.get("ok"):
+                    seen.update(dict.fromkeys(entry.get("changed", [])))
+        return list(seen)
+
+    def visible_file(conv: dict, rel: str) -> Path | None:
+        if rel not in changed_files(conv) or not env.is_cloned():
+            return None
+        try:
+            return Sandbox(env.path, Rules.load(env.path), []).locate_file(rel)
+        except ToolError:
+            return None
+
+    def attachment(data: bytes, filename: str, media_type: str) -> Response:
+        ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", filename) or "download"
+        disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+        return Response(data, media_type=media_type, headers={"Content-Disposition": disposition})
+
+    def load_own(c: Ctx, cid: str) -> dict:
+        conv = deps.store.load(c.eff.id, cid)
+        if conv is None:
+            raise HTTPException(404, "not found")
+        return conv
+
+    @app.get("/api/conversations/{cid}/files")
+    async def conversation_files(cid: str, c: Ctx = Depends(ctx)):
+        conv = load_own(c, cid)
+        files = []
+        for rel in changed_files(conv):
+            target = visible_file(conv, rel)
+            if target:
+                files.append({"path": rel, "name": Path(rel).name, "size": target.stat().st_size})
+        return files
+
+    @app.get("/api/conversations/{cid}/files/{path:path}")
+    async def download_file(cid: str, path: str, c: Ctx = Depends(ctx)):
+        target = visible_file(load_own(c, cid), path)
+        if target is None:
+            raise HTTPException(404, "not found")
+        return attachment(target.read_bytes(), Path(path).name, "application/octet-stream")
+
+    @app.get("/api/conversations/{cid}/export")
+    async def export_conversation(cid: str, c: Ctx = Depends(ctx)):
+        conv = load_own(c, cid)
+        created = dt.datetime.fromtimestamp(conv.get("created", 0), dt.timezone.utc).strftime("%Y-%m-%d")
+        lines = [f"# {conv.get('title') or 'Conversation'}", "", f"{created}", ""]
+        for message in conv["messages"]:
+            lines += [f"## {c.eff_alias if message['role'] == 'user' else 'Assistant'}", ""]
+            if message.get("content"):
+                lines += [message["content"], ""]
+            if message.get("images"):
+                lines += [f"*{len(message['images'])} image(s) attached*", ""]
+            if message.get("error"):
+                lines += [f"> Error: {message['error']}", ""]
+            files = list(dict.fromkeys(p for e in message.get("tools", []) if e.get("ok") for p in e.get("changed", [])))
+            if files:
+                lines += ["Files changed: " + ", ".join(f"`{p}`" for p in files), ""]
+        slug = re.sub(r"[^a-z0-9]+", "-", (conv.get("title") or "").lower()).strip("-")[:40] or "conversation"
+        return attachment("\n".join(lines).encode("utf-8"), f"{slug}-{created}.md", "text/markdown; charset=utf-8")
 
     @app.get("/api/family")
     async def family(c: Ctx = Depends(admin)):
