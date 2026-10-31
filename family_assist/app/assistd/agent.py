@@ -132,7 +132,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         user_msg["acted_by"] = principal.acted_by_alias
     history = history_messages(conv)
     conv["messages"].append(user_msg)
-    conv["title"] = conv["title"] or text.strip().splitlines()[0][:60]
+    conv["title"] = conv["title"] or make_teaser(text)
     deps.store.save(conv)
 
     assistant: dict = {"role": "assistant", "content": "", "tools": [], "ts": _now()}
@@ -248,6 +248,17 @@ async def _commit(deps: Deps, settings, principal: Principal, changed: list[str]
             result["pushed"] = False
             result["error"] = str(exc)
     return result
+
+
+def make_teaser(text: str, limit: int = 40) -> str:
+    """Short chat title from the first prompt: whitespace collapsed, cut at a word boundary."""
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    cut = flat[:limit]
+    if flat[limit] != " " and " " in cut:
+        cut = cut.rsplit(" ", 1)[0]
+    return cut.rstrip(" ,.;:-") + "…"
 
 
 def _now() -> float:

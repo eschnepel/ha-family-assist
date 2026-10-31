@@ -1,1 +1,2 @@
+-r family_assist/requirements.txt
 pytest>=8

@@ -1,5 +1,5 @@
 name: Family Assist
-version: "0.2.1"
+version: "0.3.0"
 slug: family_assist
 description: Family chat assistant backed by Ollama, driven by a git repository
 arch:

@@ -5,7 +5,7 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from assistd.agent import Deps, Principal, run_turn
+from assistd.agent import Deps, Principal, make_teaser, run_turn
 from assistd.config import Options, SettingsStore
 from assistd.genqueue import GenerationQueue
 from assistd.gitenv import AgentEnvironment
@@ -224,6 +224,29 @@ def test_chat_message_stream_and_acting_as(client):
     assert client.get(f"/api/conversations/{cid}", headers=as_user("kid2")).status_code == 404
     system = client.deps.ollama.calls[0]["messages"][0]["content"]
     assert "Current user: Richard" in system
+
+
+def test_make_teaser():
+    assert make_teaser("hi") == "hi"
+    assert make_teaser("  hello \n\n  world  ") == "hello world"
+    long = make_teaser("Please explain how photosynthesis works in plants and trees")
+    assert long == "Please explain how photosynthesis works…" and len(long) <= 41
+    assert make_teaser("x" * 100) == "x" * 40 + "…"
+
+
+def test_rename_conversation(client):
+    kid = as_user("kid1")
+    cid = client.post("/api/conversations", headers=kid).json()["id"]
+    url = f"/api/conversations/{cid}"
+    client.post(f"{url}/messages", headers=kid, json={"text": "Hallo"})
+    assert client.get(url, headers=kid).json()["title"] == "Hallo"
+    response = client.patch(url, headers=kid, json={"title": "  Mein \n Chat "})
+    assert response.status_code == 200 and response.json() == {"title": "Mein Chat"}
+    assert client.get("/api/conversations", headers=kid).json()[0]["title"] == "Mein Chat"
+    for bad in ("", "   ", "x" * 81):
+        assert client.patch(url, headers=kid, json={"title": bad}).status_code == 422
+    assert client.patch(url, headers=as_user("kid2"), json={"title": "x"}).status_code == 404
+    assert client.patch(url, headers={"X-Remote-User-Id": "kid1"}, json={"title": "x"}).status_code == 403
 
 
 def test_settings_roundtrip_hides_token_and_validates(client, tmp_path):

@@ -38,6 +38,18 @@ CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' 
        "connect-src 'self'; base-uri 'none'; form-action 'none'")
 
 
+class RenameIn(BaseModel):
+    title: str = Field(min_length=1, max_length=80)
+
+    @field_validator("title")
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("empty title")
+        return v
+
+
 class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     images: list[str] = Field(default_factory=list, max_length=MAX_IMAGES)
@@ -209,6 +221,17 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         if conv is None:
             raise HTTPException(404, "not found")
         return public(conv, c.eff.id)
+
+    @app.patch("/api/conversations/{cid}")
+    async def rename_conversation(cid: str, body: RenameIn, c: Ctx = Depends(ctx)):
+        conv = deps.store.load(c.eff.id, cid)
+        if conv is None:
+            raise HTTPException(404, "not found")
+        if (c.eff.id, cid) in state.running:
+            raise HTTPException(409, "a reply is being generated")
+        conv["title"] = body.title
+        deps.store.save(conv)
+        return {"title": conv["title"]}
 
     @app.post("/api/conversations/{cid}/messages")
     async def post_message(cid: str, body: MessageIn, c: Ctx = Depends(ctx)):

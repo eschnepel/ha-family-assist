@@ -23,7 +23,7 @@ const TEXT = {
     vision: "vision", unknown: "unknown", rules: "Rules from the repository (read-only)",
     hidden: "Hidden", readonly: "Read-only", enabledTools: "Enabled tools", none: "none", warnings: "Warnings",
     queue: "Queue", running: "running", waiting: "waiting", diagramError: "The diagram could not be rendered.",
-    exportChat: "Download conversation", filesChanged: "Files:",
+    exportChat: "Download conversation", renameChat: "Rename", renamePrompt: "Chat name:", filesChanged: "Files:",
     authMethod: "Access to the repository", authToken: "Access token", authGh: "GitHub CLI sign-in",
     ghLogin: "Sign in with GitHub", ghLogout: "Sign out", ghLoggedIn: (n) => `Signed in to GitHub as ${n}.`,
     ghStep1: "Open", ghStep2: "and enter this code:", ghMissing: "The GitHub CLI is not installed in this add-on.",
@@ -51,7 +51,7 @@ const TEXT = {
     vision: "Bilder", unknown: "unbekannt", rules: "Regeln aus dem Repository (nur lesbar)",
     hidden: "Versteckt", readonly: "Schreibgeschützt", enabledTools: "Aktive Werkzeuge", none: "keine", warnings: "Warnungen",
     queue: "Warteschlange", running: "läuft", waiting: "wartet", diagramError: "Das Diagramm konnte nicht dargestellt werden.",
-    exportChat: "Unterhaltung herunterladen", filesChanged: "Dateien:",
+    exportChat: "Unterhaltung herunterladen", renameChat: "Umbenennen", renamePrompt: "Name des Chats:", filesChanged: "Dateien:",
     authMethod: "Zugriff auf das Repository", authToken: "Zugriffstoken", authGh: "Anmeldung mit der GitHub CLI",
     ghLogin: "Bei GitHub anmelden", ghLogout: "Abmelden", ghLoggedIn: (n) => `Bei GitHub angemeldet als ${n}.`,
     ghStep1: "Öffne", ghStep2: "und gib diesen Code ein:", ghMissing: "Die GitHub CLI ist in diesem Add-on nicht installiert.",
@@ -466,7 +466,23 @@ function chatView() {
     h("div", { class: "composer" }, previews,
       h("div", { class: "row" }, input, attachBtn, sendBtn, fileInput),
       h("div", { class: "row" }, h("span", { class: "meta" }, t("notice")), status,
+        h("button", { type: "button", class: "secondary small", onclick: renameCurrent }, t("renameChat")),
         h("button", { type: "button", class: "secondary small", onclick: () => current && saveFile(`conversations/${current.id}/export`, "conversation.md") }, t("exportChat")))));
+}
+
+async function renameCurrent() {
+  if (!current) return;
+  const title = (prompt(t("renamePrompt"), current.title || "") || "").trim();
+  if (!title || title === current.title) return;
+  try {
+    const res = await (await api(`conversations/${current.id}`, { method: "PATCH", body: { title } })).json();
+    current.title = res.title;
+    await loadConvs();
+    const side = document.querySelector("aside");
+    if (side) side.replaceWith(sidebar());
+  } catch (e) {
+    alert(e.message);
+  }
 }
 
 // --- admin view --------------------------------------------------------------
