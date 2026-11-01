@@ -1,5 +1,5 @@
 name: Family Assist
-version: "0.3.0"
+version: "0.4.0"
 slug: family_assist
 description: Family chat assistant backed by Ollama, driven by a git repository
 arch:
@@ -11,8 +11,9 @@ boot: auto
 homeassistant_api: true
 ingress: true
 ingress_port: 8099
-panel_icon: mdi:account-school
+panel_icon: mdi:human-male-female-child
 panel_title: Family Assist
+panel_admin: false
 options:
   ollama_url: "http://homeassistant.local:11434"
   default_model: "qwen3:8b"
