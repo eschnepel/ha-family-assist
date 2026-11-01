@@ -466,17 +466,15 @@ function chatView() {
     h("div", { class: "composer" }, previews,
       h("div", { class: "row" }, input, attachBtn, sendBtn, fileInput),
       h("div", { class: "row" }, h("span", { class: "meta" }, t("notice")), status,
-        h("button", { type: "button", class: "secondary small", onclick: renameCurrent }, t("renameChat")),
         h("button", { type: "button", class: "secondary small", onclick: () => current && saveFile(`conversations/${current.id}/export`, "conversation.md") }, t("exportChat")))));
 }
 
-async function renameCurrent() {
-  if (!current) return;
-  const title = (prompt(t("renamePrompt"), current.title || "") || "").trim();
-  if (!title || title === current.title) return;
+async function renameConv(c) {
+  const title = (prompt(t("renamePrompt"), c.title || "") || "").trim();
+  if (!title || title === c.title) return;
   try {
-    const res = await (await api(`conversations/${current.id}`, { method: "PATCH", body: { title } })).json();
-    current.title = res.title;
+    const res = await (await api(`conversations/${c.id}`, { method: "PATCH", body: { title } })).json();
+    if (current && current.id === c.id) current.title = res.title;
     await loadConvs();
     const side = document.querySelector("aside");
     if (side) side.replaceWith(sidebar());
@@ -623,8 +621,11 @@ async function showAdmin() {
 function sidebar() {
   return h("aside", {},
     h("button", { type: "button", onclick: async () => { await newConversation(); await showChat(); } }, t("newChat")),
-    convs.map((c) => h("button", { type: "button", class: "conv" + (current && current.id === c.id ? " active" : ""),
-      onclick: () => openConversation(c.id) }, c.title || "...")));
+    convs.map((c) => h("div", { class: "conv-row" },
+      h("button", { type: "button", class: "conv" + (current && current.id === c.id ? " active" : ""),
+        onclick: () => openConversation(c.id) }, c.title || "..."),
+      h("button", { type: "button", class: "conv-edit", title: t("renameChat"), "aria-label": t("renameChat"),
+        onclick: (e) => { e.stopPropagation(); renameConv(c); } }, "✎"))));
 }
 
 async function renderShell() {
