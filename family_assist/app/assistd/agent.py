@@ -5,6 +5,7 @@ import datetime as dt
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import AsyncIterator
 
 import yaml
@@ -121,7 +122,7 @@ def nested_instruction_dirs(sandbox: Sandbox, touched: tuple[str, ...], loaded: 
 
 
 async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
-                   images: list[str]) -> AsyncIterator[dict]:
+                   images: list[str], lang: str = "en") -> AsyncIterator[dict]:
     """One turn; yields UI events. Always persists the conversation and commits changes."""
     options, env = deps.options, deps.env
     settings = deps.settings.get()
@@ -132,7 +133,8 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         user_msg["acted_by"] = principal.acted_by_alias
     history = history_messages(conv)
     conv["messages"].append(user_msg)
-    conv["title"] = conv["title"] or make_teaser(text)
+    needs_title = not conv["title"]
+    conv["title"] = conv["title"] or truncate_teaser(text)
     deps.store.save(conv)
 
     assistant: dict = {"role": "assistant", "content": "", "tools": [], "ts": _now()}
@@ -210,6 +212,8 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         if not assistant["content"] and not assistant["tools"]:
             assistant["notice"] = "empty"
             yield {"type": "notice", "text": "empty"}
+        elif needs_title and not limit_hit:
+            conv["title"] = await make_teaser(deps.ollama, model, text, lang, options.num_ctx)
     except OllamaError as exc:
         assistant["error"] = str(exc)
         yield {"type": "error", "text": str(exc)}
@@ -250,8 +254,8 @@ async def _commit(deps: Deps, settings, principal: Principal, changed: list[str]
     return result
 
 
-def make_teaser(text: str, limit: int = 40) -> str:
-    """Short chat title from the first prompt: whitespace collapsed, cut at a word boundary."""
+def truncate_teaser(text: str, limit: int = 40) -> str:
+    """Fallback chat title: whitespace collapsed, cut at a word boundary."""
     flat = " ".join(text.split())
     if len(flat) <= limit:
         return flat
@@ -259,6 +263,42 @@ def make_teaser(text: str, limit: int = 40) -> str:
     if flat[limit] != " " and " " in cut:
         cut = cut.rsplit(" ", 1)[0]
     return cut.rstrip(" ,.;:-") + "…"
+
+
+# The prompt lives in the add-on translation files: <add-on>/translations in the repo, /translations in the image.
+TRANSLATIONS_DIR = Path(__file__).resolve().parents[2] / "translations"
+TITLE_MAX = 60
+
+
+def title_prompt(lang: str, text: str) -> str | None:
+    for code in (lang, "en"):
+        try:
+            data = yaml.safe_load((TRANSLATIONS_DIR / f"{code}.yaml").read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            continue
+        template = data.get("chat_title_prompt") if isinstance(data, dict) else None
+        if isinstance(template, str):
+            return template.replace("{text}", text)
+    return None
+
+
+async def make_teaser(ollama: OllamaClient, model: str, text: str, lang: str, num_ctx: int) -> str:
+    """Chat title proposed by the agent; falls back to a truncated prompt if it fails or answers nothing."""
+    prompt = title_prompt(lang, text[:1000])
+    if prompt is None:
+        return truncate_teaser(text)
+    reply = ""
+    try:
+        async for chunk in ollama.chat_stream(model=model, messages=[{"role": "user", "content": prompt}],
+                                              tools=[], num_ctx=num_ctx):
+            reply += (chunk.get("message") or {}).get("content") or ""
+    except OllamaError:
+        return truncate_teaser(text)
+    lines = reply.strip().splitlines()
+    title = " ".join(lines[0].split()).strip(" \"'*`") if lines else ""
+    if not title:
+        return truncate_teaser(text)
+    return title if len(title) <= TITLE_MAX else title[:TITLE_MAX].rstrip(" ,.;:-") + "…"
 
 
 def _now() -> float:

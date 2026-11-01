@@ -53,6 +53,7 @@ class RenameIn(BaseModel):
 class MessageIn(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     images: list[str] = Field(default_factory=list, max_length=MAX_IMAGES)
+    lang: str = Field(default="en", pattern="^(de|en)$")
 
     @field_validator("images")
     @classmethod
@@ -246,7 +247,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
         async def runner() -> None:
             try:
-                async for event in run_turn(deps, c.principal, conv, body.text, body.images):
+                async for event in run_turn(deps, c.principal, conv, body.text, body.images, body.lang):
                     events.put_nowait(event)
             finally:
                 state.running.discard(key)

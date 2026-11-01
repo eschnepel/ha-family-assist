@@ -9,6 +9,7 @@ RUN python3 -m venv /opt/venv \
     && rm /tmp/requirements.txt
 
 COPY app /app
+COPY translations /translations
 COPY run.sh /run.sh
 RUN chmod a+x /run.sh
 

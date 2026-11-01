@@ -29,3 +29,9 @@ configuration:
   max_tool_result_kb:
     name: Tool result size (KB)
     description: Upper limit for the result of one tool call.
+
+chat_title_prompt: |-
+  Give a meaningful name for this chat in the format "[Context]: [descriptive word group]". Reply with the name only, at most 60 characters.
+
+  First message:
+  {text}

@@ -364,7 +364,7 @@ async function sendMessage(text, files, box, setStatus, onDone) {
     box.scrollTop = box.scrollHeight;
   };
   try {
-    const res = await api(`conversations/${current.id}/messages`, { method: "POST", body: { text, images } });
+    const res = await api(`conversations/${current.id}/messages`, { method: "POST", body: { text, images, lang } });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buf = "";

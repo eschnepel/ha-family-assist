@@ -5,7 +5,7 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from assistd.agent import Deps, Principal, make_teaser, run_turn
+from assistd.agent import Deps, Principal, make_teaser, run_turn, truncate_teaser
 from assistd.config import Options, SettingsStore
 from assistd.genqueue import GenerationQueue
 from assistd.gitenv import AgentEnvironment
@@ -83,7 +83,7 @@ def test_turn_streams_and_persists(tmp_path, checkout):
 
 
 def test_tool_loop_hidden_path_and_history_trimming(tmp_path, checkout):
-    ollama = FakeOllama([call("read_file", path="Scripts/run.ps1"), say("not there"), say("second")])
+    ollama = FakeOllama([call("read_file", path="Scripts/run.ps1"), say("not there"), say("Ctx: title"), say("second")])
     deps = make_deps(tmp_path, plain_env(checkout), ollama)
     conv = new_conv(deps)
     events = collect(deps, conv)
@@ -93,7 +93,7 @@ def test_tool_loop_hidden_path_and_history_trimming(tmp_path, checkout):
     second_call = ollama.calls[1]["messages"]
     assert second_call[-1] == {"role": "tool", "tool_name": "read_file", "content": tool["result"]}
     collect(deps, conv, text="again")
-    replay = ollama.calls[2]["messages"]
+    replay = ollama.calls[3]["messages"]
     assert [m["role"] for m in replay] == ["system", "user", "assistant", "user"]
 
 
@@ -226,12 +226,22 @@ def test_chat_message_stream_and_acting_as(client):
     assert "Current user: Richard" in system
 
 
-def test_make_teaser():
-    assert make_teaser("hi") == "hi"
-    assert make_teaser("  hello \n\n  world  ") == "hello world"
-    long = make_teaser("Please explain how photosynthesis works in plants and trees")
+def test_truncate_teaser():
+    assert truncate_teaser("hi") == "hi"
+    assert truncate_teaser("  hello \n\n  world  ") == "hello world"
+    long = truncate_teaser("Please explain how photosynthesis works in plants and trees")
     assert long == "Please explain how photosynthesis works…" and len(long) <= 41
-    assert make_teaser("x" * 100) == "x" * 40 + "…"
+    assert truncate_teaser("x" * 100) == "x" * 40 + "…"
+
+
+def test_make_teaser_asks_agent_in_user_language():
+    ollama = FakeOllama([say('"Pflanzen: Wie Photosynthese funktioniert"\nextra')])
+    title = asyncio.run(make_teaser(ollama, "m", "Erkläre Photosynthese", "de", 2048))
+    assert title == "Pflanzen: Wie Photosynthese funktioniert"
+    prompt = ollama.calls[0]["messages"][0]["content"]
+    assert "[Kontext]: [beschreibende Wortgruppe]" in prompt and "Erkläre Photosynthese" in prompt
+    failing = FakeOllama([])
+    assert asyncio.run(make_teaser(failing, "m", "hello", "en", 2048)) == "hello"
 
 
 def test_rename_conversation(client):

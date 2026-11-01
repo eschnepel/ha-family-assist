@@ -28,4 +28,9 @@ configuration:
     description: Obergrenze für Werkzeugaufrufe in einem Durchgang des Assistenten.
   max_tool_result_kb:
     name: Größe des Werkzeugergebnisses (KB)
-    description: Obergrenze für das Ergebnis eines einzelnen Werkzeugaufrufs.
+
+chat_title_prompt: |-
+  Gib diesem Chat einen aussagekräftigen Namen im Format "[Kontext]: [beschreibende Wortgruppe]". Antworte nur mit dem Namen, höchstens 60 Zeichen.
+
+  Erste Nachricht:
+  {text}
