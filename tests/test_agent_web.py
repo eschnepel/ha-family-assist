@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from assistd.agent import Deps, Principal, make_teaser, run_turn, truncate_teaser
-from assistd.config import Options, SettingsStore
+from assistd.config import DEFAULT_ENV_ID, EnvConfig, Options, Settings, SettingsStore
 from assistd.genqueue import GenerationQueue
 from assistd.gitenv import AgentEnvironment
 from assistd.identity import HAUser, StaticUsers
@@ -47,13 +47,20 @@ def call(name, **args):
 
 def make_deps(tmp_path, env, ollama, **opts) -> Deps:
     options = Options(**opts)
-    return Deps(options, SettingsStore(tmp_path / "data"), env, ollama,
+    settings = SettingsStore(tmp_path / "data")
+    settings.save(Settings([EnvConfig(DEFAULT_ENV_ID, "Default", env._url, "main")]))
+    return Deps(options, settings, env, ollama,
                 ConversationStore(tmp_path / "data" / "conversations"),
                 GenerationQueue(options.queue_enabled, options.max_parallel_generations))
 
 
+DEAD_URL = "http://127.0.0.1:9/none.git"
+
+
 def plain_env(checkout) -> AgentEnvironment:
-    return AgentEnvironment(checkout)
+    env = AgentEnvironment(checkout)
+    env.configure(DEAD_URL, "main", "")
+    return env
 
 
 def collect(deps, conv, text="hi", images=None, alias="Marten", acted_by=None):
@@ -197,7 +204,8 @@ def test_api_requires_identity_and_csrf_header(client):
     assert client.post("/api/conversations", headers={"X-Remote-User-Id": "kid1"}).status_code == 403
     response = client.get("/api/me", headers=as_user("kid1"))
     assert response.json() | {} == {"id": "kid1", "alias": "Richard", "is_admin": False, "real_alias": "Richard",
-                                    "acting": False, "ready": True, "can_write": False}
+                                    "acting": False, "can_write": False,
+                                    "environments": [{"id": "default", "name": "Default", "ready": True}]}
     assert "default-src 'none'" in response.headers["content-security-policy"]
 
 
@@ -261,10 +269,15 @@ def test_rename_conversation(client):
 
 def test_settings_roundtrip_hides_token_and_validates(client, tmp_path):
     admin = as_user("admin1")
-    body = {"repo_url": "file:///etc", "branch": "main", "allow_commits": False, "allow_push": False}
-    assert client.put("/api/admin/settings", headers=admin, json=body).status_code == 422
-    body = {"repo_url": "", "branch": "main", "allow_commits": True, "allow_push": False,
-            "aliases": {"kid1": "  Richi<>  "}, "git_token": "ghp_secret"}
+    client.deps.env.sync = lambda: None  # the dummy checkout must not be re-cloned
+    env = {"id": "default", "name": "Default", "branch": "main"}
+    body = {"environments": [{**env, "repo_url": DEAD_URL}], "allow_commits": False, "allow_push": False}
+    assert client.put("/api/admin/settings", headers=admin, json={
+        **body, "environments": [{**env, "repo_url": "file:///etc"}]}).status_code == 422
+    assert client.put("/api/admin/settings", headers=admin, json={
+        **body, "environments": [{**env, "repo_url": ""}]}).status_code == 422
+    body = {"environments": [{**env, "repo_url": DEAD_URL}], "allow_commits": True,
+            "allow_push": False, "aliases": {"kid1": "  Richi<>  "}, "git_token": "ghp_secret"}
     saved = client.put("/api/admin/settings", headers=admin, json=body).json()
     assert saved["has_token"] is True and saved["aliases"] == {"kid1": "Richi"}
     assert "ghp_secret" not in json.dumps(saved) and "ghp_secret" not in client.get("/api/admin/status", headers=admin).text
@@ -286,9 +299,10 @@ def test_message_validation(client):
 
 def test_admin_status_reports_rules_and_models(client):
     status = client.get("/api/admin/status", headers=as_user("admin1")).json()
-    assert status["rules"]["hidden"] == ["/Scripts/"]
-    assert status["rules"]["tools"] == ["list_dir", "find", "grep", "read_file"]
-    assert status["model"]["model"] == "test-model" and status["options"]["api_key_set"] is False
+    first = status["environments"][0]
+    assert first["rules"]["hidden"] == ["/Scripts/"]
+    assert first["rules"]["tools"] == ["list_dir", "find", "grep", "read_file"]
+    assert first["model"]["model"] == "test-model" and status["options"]["api_key_set"] is False
 
 
 def test_static_index_served(client):

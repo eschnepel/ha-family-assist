@@ -5,7 +5,7 @@ A Home Assistant app that lets family members chat with a locally hosted generat
 ## Language
 
 **Agent Environment**:
-The single git repository, checked out locally, whose `AGENTS.md` and supporting files define how the assistant behaves and what it can read or change.
+The git repository, checked out locally, whose `AGENTS.md` and supporting files define how the assistant behaves and what it can read or change. The Admin may configure several; each Conversation belongs to exactly one.
 _Avoid_: Agent directory, workspace, repo (when meaning the checkout), project
 
 **Family Member**:

@@ -4,10 +4,13 @@ import asyncio
 import base64
 import binascii
 import contextlib
+import dataclasses
 import datetime as dt
 import json
 import logging
 import re
+import shutil
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -19,7 +22,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .agent import Deps, Principal, read_root_agents, run_turn
-from .config import Settings, ValidationError, clean_alias, validate_branch, validate_repo_url
+from .config import (DEFAULT_ENV_ID, EnvConfig, Settings, ValidationError, clean_alias, name_from_url,
+                     validate_branch, validate_repo_url)
 from .ghcli import GhError
 from .gitenv import BusyError, GitError
 from .identity import HAUser, UserDirectory, UserDirectoryError
@@ -68,9 +72,15 @@ class MessageIn(BaseModel):
         return images
 
 
-class SettingsIn(BaseModel):
+class EnvIn(BaseModel):
+    id: str | None = Field(default=None, max_length=16)
+    name: str = Field(default="", max_length=100)
     repo_url: str = Field(max_length=500)
-    branch: str = Field(max_length=100)
+    branch: str = Field(default="main", max_length=100)
+
+
+class SettingsIn(BaseModel):
+    environments: list[EnvIn] = Field(default_factory=list, max_length=20)
     allow_commits: bool
     allow_push: bool
     aliases: dict[str, str] = Field(default_factory=dict)
@@ -111,14 +121,37 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     def apply_settings() -> Settings:
         settings = settings_store.get()
         token = gh.token if gh and settings.auth_method == "github_cli" else settings_store.git_token()
-        env.configure(settings.repo_url, settings.branch, token)
+        for cfg in settings.environments:
+            deps.env_for(cfg.id).configure(cfg.repo_url, cfg.branch, token)
         return settings
 
-    async def sync_now() -> None:
-        try:
-            await asyncio.to_thread(env.sync)
-        except GitError as exc:
-            log.warning("Sync failed: %s", exc)
+    def env_of(env_id: str):
+        """The checkout of a configured environment, else 404."""
+        if settings_store.get().env(env_id) is None:
+            raise HTTPException(404, "unknown environment")
+        return deps.env_for(env_id)
+
+    def pick_env(requested: str) -> str:
+        """The requested environment id, or the first configured one when none is given."""
+        settings = settings_store.get()
+        if requested:
+            if settings.env(requested) is None:
+                raise HTTPException(404, "unknown environment")
+            return requested
+        if not settings.environments:
+            raise HTTPException(404, "no environment configured")
+        return settings.environments[0].id
+
+    async def sync_now(target=None) -> None:
+        targets = [target] if target is not None else [
+            deps.env_for(cfg.id) for cfg in settings_store.get().environments]
+        for item in targets:
+            if not item.configured:
+                continue
+            try:
+                await asyncio.to_thread(item.sync)
+            except GitError as exc:
+                log.warning("Sync of %s failed: %s", item.path.name, exc)
 
     def spawn(coro) -> None:
         task = asyncio.create_task(coro)
@@ -136,8 +169,8 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     async def lifespan(_app: FastAPI):
         apply_settings()
         if gh:
-            gh.on_success = lambda: spawn(sync_now()) if env.configured else None
-        if background and env.configured:
+            gh.on_success = lambda: spawn(sync_now())
+        if background:
             spawn(periodic_sync())
         yield
         for task in list(state.tasks):
@@ -197,19 +230,24 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
     @app.get("/api/me")
     async def me(c: Ctx = Depends(ctx)):
+        settings = settings_store.get()
         return {
             "id": c.eff.id, "alias": c.eff_alias, "is_admin": c.real.is_admin,
             "real_alias": c.real_alias, "acting": c.acting,
-            "ready": env.is_cloned(), "can_write": settings_store.get().allow_commits,
+            "environments": [{"id": e.id, "name": e.name, "ready": deps.env_for(e.id).is_cloned()}
+                             for e in settings.environments],
+            "can_write": settings.allow_commits,
         }
 
     @app.get("/api/conversations")
-    async def list_conversations(c: Ctx = Depends(ctx)):
-        return deps.store.list(c.eff.id)
+    async def list_conversations(env: str = "", c: Ctx = Depends(ctx)):
+        if not settings_store.get().environments:
+            return []
+        return deps.store.list(c.eff.id, pick_env(env))
 
     @app.post("/api/conversations")
-    async def create_conversation(c: Ctx = Depends(ctx)):
-        conv = deps.store.create(c.eff.id)
+    async def create_conversation(env: str = "", c: Ctx = Depends(ctx)):
+        conv = deps.store.create(c.eff.id, pick_env(env))
         return {"id": conv["id"]}
 
     def public(conv: dict, uid: str) -> dict:
@@ -279,6 +317,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return list(seen)
 
     def visible_file(conv: dict, rel: str) -> Path | None:
+        env = deps.env_for(conv.get("env_id", DEFAULT_ENV_ID))
         if rel not in changed_files(conv) or not env.is_cloned():
             return None
         try:
@@ -342,7 +381,8 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
     def settings_payload() -> dict:
         s = settings_store.get()
-        return {"repo_url": s.repo_url, "branch": s.branch, "allow_commits": s.allow_commits,
+        return {"environments": [dataclasses.asdict(e) for e in s.environments],
+                "allow_commits": s.allow_commits,
                 "allow_push": s.allow_push, "aliases": s.aliases, "auth_method": s.auth_method,
                 "has_token": bool(settings_store.git_token())}
 
@@ -352,23 +392,47 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
     @app.put("/api/admin/settings")
     async def put_settings(body: SettingsIn, c: Ctx = Depends(admin)):
-        try:
-            url, branch = validate_repo_url(body.repo_url), validate_branch(body.branch or "main")
-        except ValidationError as exc:
-            raise HTTPException(422, str(exc)) from None
         old = settings_store.get()
         old_token = settings_store.git_token()
+        environments: list[EnvConfig] = []
+        try:
+            for item in body.environments:
+                url = validate_repo_url(item.repo_url)
+                if not url:
+                    raise ValidationError("Every environment needs a repository URL")
+                env_id = item.id if item.id and old.env(item.id) else uuid.uuid4().hex[:8]
+                if any(e.id == env_id for e in environments):
+                    raise ValidationError("Duplicate environment")
+                environments.append(EnvConfig(env_id, clean_alias(item.name) or name_from_url(url), url,
+                                              validate_branch(item.branch or "main")))
+        except ValidationError as exc:
+            raise HTTPException(422, str(exc)) from None
         aliases = {k[:64]: a for k, v in body.aliases.items() if (a := clean_alias(v))}
-        settings_store.save(Settings(url, branch, body.allow_commits, body.allow_push, aliases,
+        settings_store.save(Settings(environments, body.allow_commits, body.allow_push, aliases,
                                      auth_method=body.auth_method))
         if body.git_token is not None:
             settings_store.set_git_token(body.git_token)
         new = apply_settings()
-        changed = (new.repo_url, new.branch, new.auth_method, settings_store.git_token()) != (
-            old.repo_url, old.branch, old.auth_method, old_token)
-        if url and changed:
-            spawn(sync_now())
+        token_changed = (new.auth_method, settings_store.git_token()) != (old.auth_method, old_token)
+        for cfg in new.environments:
+            before = old.env(cfg.id)
+            if token_changed or before is None or (before.repo_url, before.branch) != (cfg.repo_url, cfg.branch):
+                spawn(sync_now(deps.env_for(cfg.id)))
+        for gone in old.environments:
+            if new.env(gone.id) is None:
+                await asyncio.to_thread(remove_checkout, gone.id)
         return settings_payload()
+
+    def remove_checkout(env_id: str) -> None:
+        """Deletes the checkout of a removed environment unless it holds work that exists nowhere else."""
+        gone = deps.env_for(env_id)
+        status = gone.status()
+        if status["cloned"] and (status["ahead"] or status["pending"]):
+            log.warning("Kept the checkout of removed environment %s: it has unpushed changes", env_id)
+        else:
+            shutil.rmtree(gone.path, ignore_errors=True)
+        if env_id != DEFAULT_ENV_ID:
+            deps.forget_env(env_id)
 
     @app.get("/api/admin/github")
     async def github_status(c: Ctx = Depends(admin)):
@@ -394,42 +458,35 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return await gh.status()
 
     @app.post("/api/admin/sync")
-    async def sync_endpoint(c: Ctx = Depends(admin)):
+    async def sync_endpoint(env: str = "", c: Ctx = Depends(admin)):
+        target = env_of(pick_env(env))
         try:
-            await asyncio.to_thread(env.sync)
+            await asyncio.to_thread(target.sync)
         except BusyError as exc:
             raise HTTPException(409, str(exc)) from None
         except GitError as exc:
             raise HTTPException(502, str(exc)) from None
-        return await asyncio.to_thread(env.status)
+        return await asyncio.to_thread(target.status)
 
     @app.post("/api/admin/push")
-    async def push_endpoint(c: Ctx = Depends(admin)):
+    async def push_endpoint(env: str = "", c: Ctx = Depends(admin)):
+        target = env_of(pick_env(env))
         try:
-            await asyncio.to_thread(env.push)
+            await asyncio.to_thread(target.push)
         except BusyError as exc:
             raise HTTPException(409, str(exc)) from None
         except GitError as exc:
             raise HTTPException(502, str(exc)) from None
-        return await asyncio.to_thread(env.status)
+        return await asyncio.to_thread(target.status)
 
-    @app.get("/api/admin/status")
-    async def admin_status(c: Ctx = Depends(admin)):
-        options = deps.options
-        settings = settings_store.get()
-        info: dict = {
-            "env": await asyncio.to_thread(env.status),
-            "options": {"ollama_url": options.ollama_url, "api_key_set": bool(options.ollama_api_key),
-                        "default_model": options.default_model, "vision_model": options.vision_model,
-                        "queue_enabled": options.queue_enabled,
-                        "max_parallel_generations": options.max_parallel_generations},
-            "queue": {"running": deps.queue.running, "waiting": deps.queue.waiting},
-            "rules": None, "warnings": [], "model": None,
-        }
-        model = options.default_model
-        if env.is_cloned():
-            rules = Rules.load(env.path)
-            text, front_model = read_root_agents(env.path)
+    async def environment_status(cfg: EnvConfig, settings: Settings) -> dict:
+        target = deps.env_for(cfg.id)
+        info: dict = {"id": cfg.id, "name": cfg.name, "env": await asyncio.to_thread(target.status),
+                      "rules": None, "warnings": [], "model": None}
+        model = deps.options.default_model
+        if target.is_cloned():
+            rules = Rules.load(target.path)
+            text, front_model = read_root_agents(target.path)
             model = front_model or model
             info["rules"] = {"hidden": list(rules.hidden_lines), "readonly": list(rules.readonly_lines),
                              "tools": effective_tools(rules, settings.allow_commits)}
@@ -441,6 +498,19 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         if info["model"].get("tools") is False:
             info["warnings"].append(f"Model {model} does not report tool support")
         return info
+
+    @app.get("/api/admin/status")
+    async def admin_status(c: Ctx = Depends(admin)):
+        options = deps.options
+        settings = settings_store.get()
+        return {
+            "environments": [await environment_status(cfg, settings) for cfg in settings.environments],
+            "options": {"ollama_url": options.ollama_url, "api_key_set": bool(options.ollama_api_key),
+                        "default_model": options.default_model, "vision_model": options.vision_model,
+                        "queue_enabled": options.queue_enabled,
+                        "max_parallel_generations": options.max_parallel_generations},
+            "queue": {"running": deps.queue.running, "waiting": deps.queue.waiting},
+        }
 
     # --- static ------------------------------------------------------------
 

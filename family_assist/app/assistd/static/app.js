@@ -1,73 +1,20 @@
 "use strict";
 
-const TEXT = {
-  en: {
-    newChat: "New chat", send: "Send", attach: "Photo", placeholder: "Write a message...",
-    admin: "Admin", back: "Back to chat", actAs: "Act as", myself: "Myself",
-    actingAs: (n) => `You are acting as ${n}. Conversations belong to ${n}.`,
-    notReady: "The assistant is not set up yet. An admin has to configure the agent environment.",
-    notice: "Conversations can be read by the admin.",
-    queued: (n) => `Waiting in the queue (position ${n})...`, thinking: "Working...",
-    busy: "A reply is being generated...", toolLimit: "Tool limit reached; the reply was stopped.",
-    empty: "The model returned an empty reply.", commitDone: "Saved", commitFailed: "Saving failed",
-    pushed: "pushed", notPushed: "not pushed", tool: "Tool", result: "Result",
-    settings: "Agent environment", repoUrl: "Repository URL (https)", branch: "Branch",
-    token: "Access token", tokenSet: "A token is set. Leave empty to keep it.", tokenNone: "No token set.",
-    allowCommits: "Commit Permission: the assistant may change files; each changed turn becomes a commit",
-    allowPush: "Push Permission: publish commits to the remote automatically",
-    aliases: "Aliases", save: "Save", saved: "Saved", sync: "Sync now", push: "Push now",
-    status: "Status", head: "Latest commit", ahead: "Unpushed commits", behind: "Commits behind",
-    pending: "Uncommitted changes", diverged: "Diverged from the remote", lastSync: "Last sync",
-    lastError: "Last error", never: "never", yes: "yes", no: "no",
-    ollama: "Ollama", model: "Model", reachable: "reachable", exists: "installed", tools: "tool calling",
-    vision: "vision", unknown: "unknown", rules: "Rules from the repository (read-only)",
-    hidden: "Hidden", readonly: "Read-only", enabledTools: "Enabled tools", none: "none", warnings: "Warnings",
-    queue: "Queue", running: "running", waiting: "waiting", diagramError: "The diagram could not be rendered.",
-    exportChat: "Download conversation", renameChat: "Rename", renamePrompt: "Chat name:", filesChanged: "Files:",
-    authMethod: "Access to the repository", authToken: "Access token", authGh: "GitHub CLI sign-in",
-    ghLogin: "Sign in with GitHub", ghLogout: "Sign out", ghLoggedIn: (n) => `Signed in to GitHub as ${n}.`,
-    ghStep1: "Open", ghStep2: "and enter this code:", ghMissing: "The GitHub CLI is not installed in this add-on.",
-    ghScopeNote: "GitHub CLI sign-in grants access to all repositories of that GitHub account. For a single repository use a fine-grained access token instead.",
-  },
-  de: {
-    newChat: "Neuer Chat", send: "Senden", attach: "Foto", placeholder: "Nachricht schreiben...",
-    admin: "Admin", back: "Zurück zum Chat", actAs: "Handeln als", myself: "Ich selbst",
-    actingAs: (n) => `Du handelst als ${n}. Die Unterhaltungen gehören ${n}.`,
-    notReady: "Der Assistent ist noch nicht eingerichtet. Ein Admin muss die Agent-Umgebung konfigurieren.",
-    notice: "Unterhaltungen können vom Admin gelesen werden.",
-    queued: (n) => `In der Warteschlange (Platz ${n})...`, thinking: "Arbeitet...",
-    busy: "Eine Antwort wird erzeugt...", toolLimit: "Werkzeuglimit erreicht; die Antwort wurde abgebrochen.",
-    empty: "Das Modell hat eine leere Antwort geliefert.", commitDone: "Gespeichert", commitFailed: "Speichern fehlgeschlagen",
-    pushed: "veröffentlicht", notPushed: "nicht veröffentlicht", tool: "Werkzeug", result: "Ergebnis",
-    settings: "Agent-Umgebung", repoUrl: "Repository-URL (https)", branch: "Branch",
-    token: "Zugriffstoken", tokenSet: "Ein Token ist gesetzt. Leer lassen, um es zu behalten.", tokenNone: "Kein Token gesetzt.",
-    allowCommits: "Commit-Erlaubnis: der Assistent darf Dateien ändern; jeder Durchgang mit Änderungen wird ein Commit",
-    allowPush: "Push-Erlaubnis: Commits automatisch ins Remote veröffentlichen",
-    aliases: "Aliasnamen", save: "Speichern", saved: "Gespeichert", sync: "Jetzt synchronisieren", push: "Jetzt pushen",
-    status: "Status", head: "Letzter Commit", ahead: "Unveröffentlichte Commits", behind: "Commits dahinter",
-    pending: "Nicht gespeicherte Änderungen", diverged: "Vom Remote abgewichen", lastSync: "Letzte Synchronisation",
-    lastError: "Letzter Fehler", never: "nie", yes: "ja", no: "nein",
-    ollama: "Ollama", model: "Modell", reachable: "erreichbar", exists: "installiert", tools: "Werkzeugaufrufe",
-    vision: "Bilder", unknown: "unbekannt", rules: "Regeln aus dem Repository (nur lesbar)",
-    hidden: "Versteckt", readonly: "Schreibgeschützt", enabledTools: "Aktive Werkzeuge", none: "keine", warnings: "Warnungen",
-    queue: "Warteschlange", running: "läuft", waiting: "wartet", diagramError: "Das Diagramm konnte nicht dargestellt werden.",
-    exportChat: "Unterhaltung herunterladen", renameChat: "Umbenennen", renamePrompt: "Name des Chats:", filesChanged: "Dateien:",
-    authMethod: "Zugriff auf das Repository", authToken: "Zugriffstoken", authGh: "Anmeldung mit der GitHub CLI",
-    ghLogin: "Bei GitHub anmelden", ghLogout: "Abmelden", ghLoggedIn: (n) => `Bei GitHub angemeldet als ${n}.`,
-    ghStep1: "Öffne", ghStep2: "und gib diesen Code ein:", ghMissing: "Die GitHub CLI ist in diesem Add-on nicht installiert.",
-    ghScopeNote: "Die Anmeldung mit der GitHub CLI gibt Zugriff auf alle Repositories dieses GitHub-Kontos. Für ein einzelnes Repository nimm stattdessen ein fein abgestuftes Zugriffstoken.",
-  },
-};
+const TEXT = window.FA_TEXT; // loaded from i18n/<lang>.js; add a language by adding a file and a script tag
 
 let lang = localStorage.getItem("fa-lang") || ((navigator.language || "en").startsWith("de") ? "de" : "en");
+if (!TEXT[lang]) lang = "en";
 const t = (key, ...args) => {
-  const v = TEXT[lang][key];
+  const v = TEXT[lang][key] ?? TEXT.en[key];
   return typeof v === "function" ? v(...args) : v;
 };
 
 let me = null;
 let convs = [];
 let current = null;
+let envId = localStorage.getItem("fa-env") || "";
+const currentEnv = () => (me && me.environments.find((e) => e.id === envId)) || null;
+const envReady = () => !!(currentEnv() && currentEnv().ready);
 let actAs = sessionStorage.getItem("fa-act-as") || "";
 let sending = false;
 let pollTimer = null;
@@ -414,7 +361,7 @@ function chatView() {
   const sendBtn = h("button", { type: "button" }, t("send"));
   const attachBtn = h("button", { type: "button", class: "secondary" }, t("attach"));
 
-  const setBusy = (busy) => { sendBtn.disabled = busy || !me.ready; input.disabled = busy; };
+  const setBusy = (busy) => { sendBtn.disabled = busy || !envReady(); input.disabled = busy; };
   const refresh = async () => {
     await loadConvs();
     current = await (await api(`conversations/${current.id}`)).json();
@@ -448,7 +395,8 @@ function chatView() {
   });
 
   if (current) renderMessages(box);
-  if (!me.ready) status.textContent = t("notReady");
+  if (!currentEnv()) status.textContent = t("noEnv");
+  else if (!envReady()) status.textContent = t("notReady");
   else if (current && current.busy) {
     status.textContent = t("busy");
     setBusy(true);
@@ -460,7 +408,7 @@ function chatView() {
     };
     pollTimer = setTimeout(poll, 3000);
   }
-  setBusy(sending || !me.ready || (current && current.busy));
+  setBusy(sending || !envReady() || (current && current.busy));
   return h("div", { id: "view" },
     box,
     h("div", { class: "composer" }, previews,
@@ -522,8 +470,18 @@ async function adminView() {
     api("admin/status").then((r) => r.json()),
     api("family").then((r) => r.json()),
   ]);
-  const url = h("input", { type: "text", value: settings.repo_url, autocomplete: "off" });
-  const branch = h("input", { type: "text", value: settings.branch });
+  const rows = settings.environments.map((e) => ({ id: e.id, name: e.name, url: e.repo_url, branch: e.branch }));
+  const envList = h("div", { class: "envs" });
+  const renderEnvs = () => envList.replaceChildren(...rows.map((row) => h("div", { class: "env-row" },
+    h("label", {}, t("envName")), h("input", { type: "text", value: row.name, oninput: (e) => { row.name = e.target.value; } }),
+    h("label", {}, t("repoUrl")), h("input", { type: "text", value: row.url, autocomplete: "off", oninput: (e) => { row.url = e.target.value; } }),
+    h("label", {}, t("branch")), h("input", { type: "text", value: row.branch, oninput: (e) => { row.branch = e.target.value; } }),
+    h("button", { type: "button", class: "secondary small", onclick: () => {
+      if (!confirm(t("removeConfirm"))) return;
+      rows.splice(rows.indexOf(row), 1);
+      renderEnvs();
+    } }, t("removeEnv")))));
+  renderEnvs();
   const token = h("input", { type: "password", autocomplete: "new-password" });
   const method = h("select", {},
     h("option", { value: "token", selected: settings.auth_method === "token" }, t("authToken")),
@@ -545,12 +503,29 @@ async function adminView() {
     try { msg.textContent = ""; await fn(); await reload(); } catch (e) { msg.textContent = e.message; msg.className = "meta err"; }
   };
 
-  const env = status.env;
-  const model = status.model || {};
+  const envStatuses = status.environments;
+  const envStatus = ({ id, name, env, model, warnings, rules }) => h("div", {},
+    h("h3", {}, name),
+    h("div", { class: "row-actions" },
+      h("button", { type: "button", class: "secondary", onclick: act(() => api(`admin/sync?env=${id}`, { method: "POST" })) }, t("sync")),
+      h("button", { type: "button", class: "secondary", onclick: act(() => api(`admin/push?env=${id}`, { method: "POST" })) }, t("push"))),
+    h("ul", {},
+      h("li", {}, `${t("head")}: ${env.head || "-"}`),
+      h("li", {}, `${t("ahead")}: ${env.ahead}, ${t("behind")}: ${env.behind}, ${t("pending")}: ${env.pending}`),
+      h("li", {}, `${t("diverged")}: ${yesNo(env.diverged)}`),
+      h("li", {}, `${t("lastSync")}: ${fmtTime(env.last_sync)}`),
+      env.last_error ? h("li", { class: "err" }, `${t("lastError")}: ${env.last_error}`) : null,
+      h("li", {}, `${t("model")}: ${model.model} - ${t("reachable")}: ${yesNo(model.reachable)}, ${t("exists")}: ${yesNo(model.exists)}, ${t("tools")}: ${yesNo(model.tools)}, ${t("vision")}: ${yesNo(model.vision)}`)),
+    warnings.length ? h("div", {}, h("strong", {}, t("warnings")), h("ul", { class: "warn" }, warnings.map((w) => h("li", {}, w)))) : null,
+    rules ? h("div", {}, h("strong", {}, t("rules")),
+      h("div", {}, h("strong", {}, t("hidden") + ": "), rules.hidden.join("  ") || t("none")),
+      h("div", {}, h("strong", {}, t("readonly") + ": "), rules.readonly.join("  ") || t("none")),
+      h("div", {}, h("strong", {}, t("enabledTools") + ": "), rules.tools.join(", ") || t("none"))) : null);
   view.append(...[
+    h("h2", {}, t("environments")),
+    envList,
+    h("button", { type: "button", class: "secondary", onclick: () => { rows.push({ id: null, name: "", url: "", branch: "main" }); renderEnvs(); } }, t("addEnv")),
     h("h2", {}, t("settings")),
-    h("label", {}, t("repoUrl")), url,
-    h("label", {}, t("branch")), branch,
     h("label", {}, t("authMethod")), method, tokenBox, ghBox,
     h("label", {}, commits, " ", t("allowCommits")),
     h("label", {}, push, " ", t("allowPush")),
@@ -561,26 +536,19 @@ async function adminView() {
         const aliases = {};
         for (const { u, input } of aliasInputs) if (input.value.trim() && input.value.trim() !== u.name) aliases[u.id] = input.value.trim();
         await api("admin/settings", { method: "PUT", body: {
-          repo_url: url.value, branch: branch.value, allow_commits: commits.checked, allow_push: push.checked,
+          environments: rows.map((r) => ({ id: r.id, name: r.name, repo_url: r.url, branch: r.branch })),
+          allow_commits: commits.checked, allow_push: push.checked,
           aliases, auth_method: method.value, git_token: token.value ? token.value : null } });
+        me = await (await api("me")).json();
+        if (!currentEnv()) { envId = me.environments.length ? me.environments[0].id : ""; current = null; }
+        await loadConvs();
       }) }, t("save")),
-      h("button", { type: "button", class: "secondary", onclick: act(() => api("admin/sync", { method: "POST" })) }, t("sync")),
-      h("button", { type: "button", class: "secondary", onclick: act(() => api("admin/push", { method: "POST" })) }, t("push")),
       msg),
     h("h2", {}, t("status")),
     h("ul", {},
-      h("li", {}, `${t("head")}: ${env.head || "-"}`),
-      h("li", {}, `${t("ahead")}: ${env.ahead}, ${t("behind")}: ${env.behind}, ${t("pending")}: ${env.pending}`),
-      h("li", {}, `${t("diverged")}: ${yesNo(env.diverged)}`),
-      h("li", {}, `${t("lastSync")}: ${fmtTime(env.last_sync)}`),
-      env.last_error ? h("li", { class: "err" }, `${t("lastError")}: ${env.last_error}`) : null,
-      h("li", {}, `${t("ollama")}: ${status.options.ollama_url} (${model.model}) - ${t("reachable")}: ${yesNo(model.reachable)}, ${t("exists")}: ${yesNo(model.exists)}, ${t("tools")}: ${yesNo(model.tools)}, ${t("vision")}: ${yesNo(model.vision)}`),
+      h("li", {}, `${t("ollama")}: ${status.options.ollama_url}`),
       h("li", {}, `${t("queue")}: ${status.queue.running} ${t("running")}, ${status.queue.waiting} ${t("waiting")}`)),
-    status.warnings.length ? h("div", {}, h("h2", {}, t("warnings")), h("ul", { class: "warn" }, status.warnings.map((w) => h("li", {}, w)))) : null,
-    status.rules ? h("div", {}, h("h2", {}, t("rules")),
-      h("div", {}, h("strong", {}, t("hidden") + ": "), status.rules.hidden.join("  ") || t("none")),
-      h("div", {}, h("strong", {}, t("readonly") + ": "), status.rules.readonly.join("  ") || t("none")),
-      h("div", {}, h("strong", {}, t("enabledTools") + ": "), status.rules.tools.join(", ") || t("none"))) : null,
+    envStatuses.map(envStatus),
   ].filter(Boolean));
   return view;
 }
@@ -588,11 +556,11 @@ async function adminView() {
 // --- shell --------------------------------------------------------------------
 
 async function loadConvs() {
-  convs = await (await api("conversations")).json();
+  convs = currentEnv() ? await (await api(`conversations?env=${encodeURIComponent(envId)}`)).json() : [];
 }
 
 async function newConversation() {
-  const { id } = await (await api("conversations", { method: "POST" })).json();
+  const { id } = await (await api(`conversations?env=${encodeURIComponent(envId)}`, { method: "POST" })).json();
   await loadConvs();
   current = await (await api(`conversations/${id}`)).json();
 }
@@ -619,8 +587,21 @@ async function showAdmin() {
 }
 
 function sidebar() {
+  const envSelect = me.environments.length > 1 ? h("select", { title: t("environment"), "aria-label": t("environment") },
+    me.environments.map((e) => h("option", { value: e.id, selected: e.id === envId }, e.name))) : null;
+  if (envSelect) {
+    envSelect.addEventListener("change", async () => {
+      clearTimeout(pollTimer);
+      envId = envSelect.value;
+      localStorage.setItem("fa-env", envId);
+      current = null;
+      await loadConvs();
+      await showChat();
+    });
+  }
   return h("aside", {},
-    h("button", { type: "button", onclick: async () => { await newConversation(); await showChat(); } }, t("newChat")),
+    envSelect,
+    h("button", { type: "button", disabled: !currentEnv(), onclick: async () => { await newConversation(); await showChat(); } }, t("newChat")),
     convs.map((c) => h("div", { class: "conv-row" },
       h("button", { type: "button", class: "conv" + (current && current.id === c.id ? " active" : ""),
         onclick: () => openConversation(c.id) }, c.title || "..."),
@@ -656,6 +637,7 @@ async function boot() {
   try {
     me = await (await api("me")).json();
     if (actAs && !me.acting) { actAs = ""; sessionStorage.removeItem("fa-act-as"); }
+    if (!currentEnv()) envId = me.environments.length ? me.environments[0].id : "";
     await renderShell();
     await loadConvs();
     await showChat();

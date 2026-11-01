@@ -89,16 +89,40 @@ def clean_alias(alias: str) -> str:
     return alias[:60]
 
 
+DEFAULT_ENV_ID = "default"
+ENV_ID_RE = re.compile(r"^[a-z0-9]{1,16}$")
+
+
+def name_from_url(url: str) -> str:
+    last = urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]
+    return clean_alias(last.removesuffix(".git")) or "Environment"
+
+
+@dataclass
+class EnvConfig:
+    """One Agent Environment: a git repository and branch."""
+
+    id: str
+    name: str
+    repo_url: str
+    branch: str = "main"
+
+
 @dataclass
 class Settings:
     """Admin settings edited in the UI."""
 
-    repo_url: str = ""
-    branch: str = "main"
+    environments: list[EnvConfig] = field(default_factory=list)
     allow_commits: bool = False
     allow_push: bool = False
     aliases: dict[str, str] = field(default_factory=dict)
     auth_method: str = "token"  # token | github_cli
+    # Single-environment settings of earlier versions; migrated by SettingsStore.get().
+    repo_url: str = ""
+    branch: str = "main"
+
+    def env(self, env_id: str) -> EnvConfig | None:
+        return next((e for e in self.environments if e.id == env_id), None)
 
 
 class SettingsStore:
@@ -110,8 +134,21 @@ class SettingsStore:
     def get(self) -> Settings:
         with self._lock:
             raw = self._read(self._settings_path)
-        known = {f.name for f in dataclasses.fields(Settings)}
-        return Settings(**{k: v for k, v in raw.items() if k in known})
+            known = {f.name for f in dataclasses.fields(Settings)} - {"environments"}
+            settings = Settings(**{k: v for k, v in raw.items() if k in known})
+            env_fields = {f.name for f in dataclasses.fields(EnvConfig)}
+            for item in raw.get("environments") or []:
+                if isinstance(item, dict) and env_fields <= item.keys():
+                    settings.environments.append(EnvConfig(**{k: item[k] for k in env_fields}))
+            if settings.repo_url:
+                # Migration: the former single repository becomes the default environment, which keeps
+                # its checkout and its conversations (conversations without an environment belong to it).
+                if not settings.environments:
+                    settings.environments.append(EnvConfig(
+                        DEFAULT_ENV_ID, name_from_url(settings.repo_url), settings.repo_url, settings.branch))
+                settings.repo_url, settings.branch = "", "main"
+                write_json_atomic(self._settings_path, dataclasses.asdict(settings))
+            return settings
 
     def save(self, settings: Settings) -> None:
         with self._lock:

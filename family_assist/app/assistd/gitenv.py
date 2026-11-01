@@ -52,6 +52,10 @@ class AgentEnvironment:
         return (self._token() if callable(self._token) else self._token) or ""
 
     @property
+    def extra_protocols(self) -> tuple[str, ...]:
+        return self._extra_protocols
+
+    @property
     def configured(self) -> bool:
         return bool(self._url)
 

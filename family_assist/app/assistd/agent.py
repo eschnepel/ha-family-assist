@@ -4,13 +4,13 @@ import asyncio
 import datetime as dt
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import AsyncIterator
 
 import yaml
 
-from .config import Options, SettingsStore
+from .config import DEFAULT_ENV_ID, ENV_ID_RE, Options, SettingsStore
 from .genqueue import GenerationQueue
 from .ghcli import GitHubCli
 from .gitenv import AgentEnvironment, GitError
@@ -47,11 +47,26 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,100}$")
 class Deps:
     options: Options
     settings: SettingsStore
-    env: AgentEnvironment
+    env: AgentEnvironment  # the checkout of the default (migrated) environment
     ollama: OllamaClient
     store: ConversationStore
     queue: GenerationQueue
     gh: GitHubCli | None = None
+    _envs: dict[str, AgentEnvironment] = field(default_factory=dict, repr=False)
+
+    def env_for(self, env_id: str) -> AgentEnvironment:
+        """The checkout for an environment id; additional checkouts live next to the default one."""
+        if env_id == DEFAULT_ENV_ID:
+            return self.env
+        if not ENV_ID_RE.match(env_id):
+            raise ValueError("invalid environment id")
+        if env_id not in self._envs:
+            self._envs[env_id] = AgentEnvironment(self.env.path.parent / "envs" / env_id,
+                                                  extra_protocols=self.env.extra_protocols)
+        return self._envs[env_id]
+
+    def forget_env(self, env_id: str) -> None:
+        self._envs.pop(env_id, None)
 
 
 @dataclass(frozen=True)
@@ -124,8 +139,9 @@ def nested_instruction_dirs(sandbox: Sandbox, touched: tuple[str, ...], loaded: 
 async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                    images: list[str], lang: str = "en") -> AsyncIterator[dict]:
     """One turn; yields UI events. Always persists the conversation and commits changes."""
-    options, env = deps.options, deps.env
+    options = deps.options
     settings = deps.settings.get()
+    env_id = conv.get("env_id", DEFAULT_ENV_ID)
     user_msg: dict = {"role": "user", "content": text, "ts": _now()}
     if images:
         user_msg["images"] = images
@@ -141,6 +157,9 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
     changed: list[str] = []
     ticket = None
     try:
+        if settings.environments and settings.env(env_id) is None:
+            raise OllamaError("The agent environment of this conversation no longer exists.")
+        env = deps.env_for(env_id)
         if not env.is_cloned():
             raise OllamaError("The agent environment is not ready yet. Ask an admin to configure it.")
         rules = Rules.load(env.path)
@@ -226,7 +245,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
             deps.queue.release(ticket)
 
     if changed:
-        commit = await _commit(deps, settings, principal, changed)
+        commit = await _commit(deps, env, settings, principal, changed)
         assistant["commit"] = commit
         yield {"type": "commit", **commit}
     conv["messages"].append(assistant)
@@ -235,10 +254,10 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
     yield {"type": "done"}
 
 
-async def _commit(deps: Deps, settings, principal: Principal, changed: list[str]) -> dict:
+async def _commit(deps: Deps, env: AgentEnvironment, settings, principal: Principal, changed: list[str]) -> dict:
     result: dict = {}
     try:
-        info = await asyncio.to_thread(deps.env.commit, changed, principal.alias, principal.acted_by_alias)
+        info = await asyncio.to_thread(env.commit, changed, principal.alias, principal.acted_by_alias)
         if info is None:
             return {"commit": None, "message": "no changes", "files": sorted(set(changed))}
         result = dict(info)
@@ -246,7 +265,7 @@ async def _commit(deps: Deps, settings, principal: Principal, changed: list[str]
         return {"commit": None, "message": "commit failed", "files": sorted(set(changed)), "error": str(exc)}
     if settings.allow_push:
         try:
-            await asyncio.to_thread(deps.env.push)
+            await asyncio.to_thread(env.push)
             result["pushed"] = True
         except GitError as exc:
             result["pushed"] = False

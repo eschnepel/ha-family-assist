@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from assistd.ghcli import GitHubCli
 from assistd.identity import StaticUsers
 from assistd.web import create_app
-from test_agent_web import FakeOllama, USERS, as_user, make_deps, plain_env
+from test_agent_web import DEAD_URL, FakeOllama, USERS, as_user, make_deps, plain_env
 
 FAKE = (sys.executable, str(Path(__file__).with_name("fake_gh.py")))
 
@@ -129,8 +129,10 @@ def test_login_through_the_api_and_token_reaches_git(web, tmp_path):
     admin = as_user("admin1")
     login = web.post("/api/admin/github/login", headers=admin).json()
     assert login["login"]["code"] == "ABCD-1234" and login["logged_in"] is False
-    body = {"repo_url": "", "branch": "main", "allow_commits": False, "allow_push": False,
+    body = {"environments": [{"id": "default", "name": "Default", "repo_url": DEAD_URL, "branch": "main"}],
+            "allow_commits": False, "allow_push": False,
             "auth_method": "github_cli"}
+    web.deps.env.sync = lambda: None  # the dummy checkout must not be re-cloned
     assert web.put("/api/admin/settings", headers=admin, json=body).json()["auth_method"] == "github_cli"
     assert web.deps.env._current_token() == ""
     (tmp_path / "gh" / "approve").write_text("")
