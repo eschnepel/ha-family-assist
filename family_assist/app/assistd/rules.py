@@ -1,18 +1,17 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 
 import pathspec
+import yaml
 
 # Not overridable by the repository's own rule files.
 BUILTIN_HIDDEN = (".git",)
-BUILTIN_READONLY = (".agenthidden", ".agentreadonly", ".agenttools", "AGENTS.md")
+BUILTIN_READONLY = (".family_assist.yaml", "AGENTS.md")
 
-HIDDEN_FILE = ".agenthidden"
-READONLY_FILE = ".agentreadonly"
-TOOLS_FILE = ".agenttools"
+CONFIG_FILE = ".family_assist.yaml"
 _MAX_RULE_FILE_BYTES = 64 * 1024
 
 
@@ -28,18 +27,34 @@ def _match(spec: pathspec.GitIgnoreSpec, rel: str, is_dir: bool) -> bool:
     return spec.match_file(rel + "/" if is_dir else rel)
 
 
-def _read_lines(root: Path, name: str) -> list[str] | None:
-    path = root / name
+def _read_config(root: Path) -> tuple[dict, list[str]]:
+    path = root / CONFIG_FILE
     try:
         if path.is_symlink() or not path.is_file():
-            return None
+            return {}, []
         with path.open("rb") as fh:
             data = fh.read(_MAX_RULE_FILE_BYTES)
     except OSError:
-        return None
-    text = data.decode("utf-8", errors="replace")
-    return [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+        return {}, []
+    try:
+        doc = yaml.safe_load(data.decode("utf-8", errors="replace"))
+    except yaml.YAMLError:
+        return {}, [f"{CONFIG_FILE} is not valid YAML and is ignored"]
+    if doc is None:
+        return {}, []
+    if not isinstance(doc, dict):
+        return {}, [f"{CONFIG_FILE} must be a mapping and is ignored"]
+    return doc, []
 
+
+def _string_list(doc: dict, key: str, warnings: list[str]) -> list[str] | None:
+    if key not in doc or doc[key] is None:
+        return None
+    value = doc[key]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        warnings.append(f"{key} in {CONFIG_FILE} must be a list of strings and is ignored")
+        return None
+    return [v.strip() for v in value if v.strip()]
 
 @dataclass(frozen=True)
 class Rules:
@@ -50,12 +65,12 @@ class Rules:
 
     @staticmethod
     def load(root: Path) -> "Rules":
-        warnings: list[str] = []
-        hidden = _read_lines(root, HIDDEN_FILE) or []
-        readonly = _read_lines(root, READONLY_FILE) or []
-        tool_lines = _read_lines(root, TOOLS_FILE)
+        doc, warnings = _read_config(root)
+        hidden = _string_list(doc, "hidden", warnings) or []
+        readonly = _string_list(doc, "readonly", warnings) or []
+        tool_lines = _string_list(doc, "tools", warnings)
         if hidden and _match(_spec(hidden), "AGENTS.md", False):
-            warnings.append(f"A rule in {HIDDEN_FILE} matches the root AGENTS.md and is ignored for it")
+            warnings.append(f"A rule in {CONFIG_FILE} (hidden) matches the root AGENTS.md and is ignored for it")
         tools = None if tool_lines is None else frozenset(tool_lines)
         return Rules(tuple(hidden), tuple(readonly), tools, tuple(warnings))
 

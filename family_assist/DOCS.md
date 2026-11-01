@@ -12,13 +12,13 @@ A chat assistant for the family, backed by Ollama. Its behaviour and files come 
 
 ## Rules inside the repository
 
-Optional files in the repository root, all in `.gitignore` syntax or one name per line:
+Optional file `.family_assist.yaml` in the repository root, with three optional lists:
 
-- `.agenthidden`: paths the assistant cannot see.
-- `.agentreadonly`: paths the assistant can read but not change.
-- `.agenttools`: restricts the assistant to the listed tools (`list_dir`, `find`, `grep`, `read_file`, `create_file`, `write_file`, `append_file`, `replace_in_file`).
+- `hidden`: paths (`.gitignore` syntax) the assistant cannot see.
+- `readonly`: paths (`.gitignore` syntax) the assistant can read but not change.
+- `tools`: restricts the assistant to the listed tools (`list_dir`, `find`, `grep`, `read_file`, `create_file`, `write_file`, `append_file`, `replace_in_file`).
 
-`.git`, the three rule files and every `AGENTS.md` are always protected. The root `AGENTS.md` is the system prompt; an optional `modell:` in its front matter selects the model.
+`.git`, `.family_assist.yaml` and every `AGENTS.md` are always protected. The root `AGENTS.md` is the system prompt; an optional `modell:` in its front matter selects the model.
 
 ## Options
 

@@ -41,8 +41,7 @@ def checkout(tmp_path: Path) -> Path:
     write(root, "Mathe/Klasse-8/Marten/a.md", "task bruch\n")
     write(root, "Scripts/run.ps1", "secret script\n")
     write(root, "Scripts/AGENTS.md", "script rules")
-    write(root, ".agenthidden", "# hide\n/Scripts/\n")
-    write(root, ".agentreadonly", "Lehrplan-*/\n")
+    write(root, ".family_assist.yaml", "hidden:\n  - /Scripts/\nreadonly:\n  - Lehrplan-*/\n")
     (root / ".git").mkdir()
     write(root, ".git/config", "[core]\n")
     return root

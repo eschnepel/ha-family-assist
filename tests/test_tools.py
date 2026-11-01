@@ -17,17 +17,26 @@ def test_rules_hidden_and_readonly(checkout):
     assert not rules.is_hidden("Mathe/notes.md")
     assert rules.is_readonly("Mathe/Lehrplan-Gymnasium/Klasse-8.md")
     assert rules.is_readonly("AGENTS.md") and rules.is_readonly("Mathe/AGENTS.md")
-    assert rules.is_readonly(".agenttools")
+    assert rules.is_readonly(".family_assist.yaml")
 
 
 def test_negation_cannot_lift_builtin_protection(checkout):
-    write(checkout, ".agentreadonly", "!AGENTS.md\n!.agenthidden\n")
+    write(checkout, ".family_assist.yaml", "readonly:\n  - '!AGENTS.md'\n  - '!.family_assist.yaml'\n")
     rules = Rules.load(checkout)
-    assert rules.is_readonly("AGENTS.md") and rules.is_readonly(".agenthidden")
+    assert rules.is_readonly("AGENTS.md") and rules.is_readonly(".family_assist.yaml")
+
+
+def test_invalid_config_is_ignored_with_warning(checkout):
+    write(checkout, ".family_assist.yaml", "hidden: [unclosed\n")
+    rules = Rules.load(checkout)
+    assert not rules.is_hidden("Scripts") and rules.warnings
+    write(checkout, ".family_assist.yaml", "tools: read_file\n")
+    rules = Rules.load(checkout)
+    assert rules.tools is None and rules.warnings
 
 
 def test_hiding_root_agents_md_is_ignored_with_warning(checkout):
-    write(checkout, ".agenthidden", "AGENTS.md\n")
+    write(checkout, ".family_assist.yaml", "hidden:\n  - AGENTS.md\n")
     rules = Rules.load(checkout)
     assert not rules.is_hidden("AGENTS.md")
     assert rules.warnings
@@ -105,7 +114,7 @@ def test_write_tools(checkout):
 def test_readonly_and_builtin_protection(checkout):
     sb = sandbox(checkout)
     for path in ["Mathe/Lehrplan-Gymnasium/Klasse-8.md", "Mathe/Lehrplan-Gymnasium/new.md", "AGENTS.md",
-                 "Mathe/AGENTS.md", ".agenthidden", ".agenttools"]:
+                 "Mathe/AGENTS.md", ".family_assist.yaml"]:
         res = sb.execute("write_file", {"path": path, "content": "x"})
         assert not res.ok and "read-only" in res.text, path
     assert (checkout / "AGENTS.md").read_text().startswith("---")
@@ -144,7 +153,7 @@ def test_effective_tools_follow_commit_permission_and_agenttools(checkout):
     rules = Rules.load(checkout)
     assert effective_tools(rules, False) == list(READ_TOOLS)
     assert effective_tools(rules, True) == ALL
-    write(checkout, ".agenttools", "# only\nlist_dir\nread_file\nwrite_file\nbash\n")
+    write(checkout, ".family_assist.yaml", "tools:\n  - list_dir\n  - read_file\n  - write_file\n  - bash\n")
     rules = Rules.load(checkout)
     assert effective_tools(rules, False) == ["list_dir", "read_file"]
     assert effective_tools(rules, True) == ["list_dir", "read_file", "write_file"]

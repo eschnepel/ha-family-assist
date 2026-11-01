@@ -14,7 +14,7 @@ def session(tmp_path, remote):
     env = AgentEnvironment(tmp_path / "env" / "repo", extra_protocols=("file",))
     env.configure(str(remote), "main", "")
     env.sync()
-    write(env.path, ".agenthidden", "/secret/\n")
+    write(env.path, ".family_assist.yaml", "hidden:\n  - /secret/\n")
     write(env.path, "secret/plan.md", "hidden")
     ollama = FakeOllama([call("create_file", path="Mathe/Aufgabe ä.md", content="# Aufgabe\n<script>1</script>\n"),
                          say("Fertig")])
@@ -61,7 +61,7 @@ def test_other_family_members_cannot_download_or_export(session):
 
 
 def test_hidden_rule_added_later_blocks_download(session):
-    write(session.deps.env.path, ".agenthidden", "/secret/\nMathe/\n")
+    write(session.deps.env.path, ".family_assist.yaml", "hidden:\n  - /secret/\n  - Mathe/\n")
     headers = as_user("kid1")
     assert session.get(f"/api/conversations/{session.cid}/files", headers=headers).json() == []
     assert session.get(f"/api/conversations/{session.cid}/files/Mathe/Aufgabe%20%C3%A4.md",

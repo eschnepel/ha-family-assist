@@ -434,7 +434,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             info["rules"] = {"hidden": list(rules.hidden_lines), "readonly": list(rules.readonly_lines),
                              "tools": effective_tools(rules, settings.allow_commits)}
             info["warnings"] += list(rules.warnings)
-            info["warnings"] += [f"Unknown tool in .agenttools: {n}" for n in unknown_tool_names(rules)]
+            info["warnings"] += [f"Unknown tool in .family_assist.yaml: {n}" for n in unknown_tool_names(rules)]
             if not text:
                 info["warnings"].append("The environment has no root AGENTS.md")
         info["model"] = await deps.ollama.check_model(model)

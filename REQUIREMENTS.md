@@ -54,11 +54,11 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
   | `replace_in_file` | write | one or several exact-string replacements, all-or-nothing, each string must match exactly once |
 
   There is no delete, move or rename in v1.
-- R5.2 Tool Allowlist: only listed tools are usable. A call to an unlisted tool is rejected with an error result. Without `.agenttools` the list is the four read tools, plus the four write tools when Commit Permission is on.
-- R5.3 `.agenttools` (optional, repo root): one tool name per line, `#` comments. When present, only the listed tools are enabled, and it can only narrow the catalog, never grant write tools while Commit Permission is off. Unknown names are ignored with an admin warning.
-- R5.4 `.agenthidden` and `.agentreadonly` (optional, repo root) use `.gitignore` syntax (globs, `/` anchoring, `!` negation, `#` comments). Root files only; nested copies are not supported. They apply to everyone including admins and are maintained outside Home Assistant.
+- R5.2 Tool Allowlist: only listed tools are usable. A call to an unlisted tool is rejected with an error result. Without `tools` in `.family_assist.yaml` the list is the four read tools, plus the four write tools when Commit Permission is on.
+- R5.3 `.family_assist.yaml` (optional, repo root) is the single repository config file, a YAML mapping with the optional lists `tools`, `hidden` and `readonly`. Invalid YAML or a wrongly typed key is ignored with an admin warning. `tools` holds tool names; when present, only the listed tools are enabled, and it can only narrow the catalog, never grant write tools while Commit Permission is off. Unknown names are ignored with an admin warning.
+- R5.4 `hidden` and `readonly` hold `.gitignore`-syntax patterns (globs, `/` anchoring, `!` negation). Root file only; nested copies are not supported. They apply to everyone including admins and are maintained outside Home Assistant.
 - R5.5 A Hidden Path behaves as if it does not exist: absent from `list_dir`, `find`, `grep` and context loading; reads and writes return "not found". A Hidden Path's nested `AGENTS.md` is never loaded. A rule that matches the root `AGENTS.md` is ignored with an admin warning.
-- R5.6 Built-in protections that no rule can lift: `.git` is hidden; `.agenthidden`, `.agentreadonly`, `.agenttools` and every `AGENTS.md` are read-only.
+- R5.6 Built-in protections that no rule can lift: `.git` is hidden; `.family_assist.yaml` and every `AGENTS.md` are read-only.
 - R5.7 Paths are resolved with `realpath` and must stay inside the checkout (symlinks cannot escape); the resolved path is checked against the rules again.
 - R5.8 The rules are defined only in the repository; the admin UI shows the effective rules read-only. Rule changes take effect after Sync.
 - R5.9 Limits: write files are capped at 256 KB; each tool result at `max_tool_result_kb`; each turn at `max_tool_calls_per_turn` calls. When the limit is reached the turn ends with a visible note.
@@ -81,19 +81,19 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
 
 ## 8. Example Agent Environment
 
-`Lernbegleiter` (private, `eschnepel/Lernbegleiter`) is the reference Agent Environment: a root `AGENTS.md` with YAML front matter, per-student profiles, glossaries and generated curriculum files. It ships these rule files:
+`Lernbegleiter` (private, `eschnepel/Lernbegleiter`) is the reference Agent Environment: a root `AGENTS.md` with YAML front matter, per-student profiles, glossaries and generated curriculum files. It ships this config file:
 
+```yaml
+# .family_assist.yaml
+hidden:
+  - /Scripts/
+readonly:
+  - Lehrplan-*/
+  - GLOSSARY-TEMPLATE.md
+  - AUFGABE-TEMPLATE.md
 ```
-# .agenthidden
-/Scripts/
 
-# .agentreadonly
-Lehrplan-*/
-GLOSSARY-TEMPLATE.md
-AUFGABE-TEMPLATE.md
-```
-
-It has no `.agenttools`, so the default list applies.
+It has no `tools` key, so the default list applies.
 
 ## 9. Implementation notes
 
