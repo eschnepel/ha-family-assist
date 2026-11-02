@@ -272,6 +272,16 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         deps.store.save(conv)
         return {"title": conv["title"]}
 
+    @app.delete("/api/conversations/{cid}")
+    async def delete_conversation(cid: str, c: Ctx = Depends(ctx)):
+        conv = deps.store.load(c.eff.id, cid)
+        if conv is None:
+            raise HTTPException(404, "not found")
+        if (c.eff.id, cid) in state.running:
+            raise HTTPException(409, "a reply is being generated")
+        deps.store.soft_delete(conv)
+        return {"ok": True}
+
     @app.post("/api/conversations/{cid}/messages")
     async def post_message(cid: str, body: MessageIn, c: Ctx = Depends(ctx)):
         conv = deps.store.load(c.eff.id, cid)
@@ -498,6 +508,20 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         if info["model"].get("tools") is False:
             info["warnings"].append(f"Model {model} does not report tool support")
         return info
+
+    @app.get("/api/admin/deleted")
+    async def deleted_conversations(c: Ctx = Depends(admin)):
+        return await asyncio.to_thread(deps.store.list_deleted)
+
+    @app.post("/api/admin/deleted/{uid}/{cid}/restore")
+    async def restore_conversation(uid: str, cid: str, c: Ctx = Depends(admin)):
+        try:
+            ok = deps.store.restore(uid, cid)
+        except ValueError:
+            ok = False
+        if not ok:
+            raise HTTPException(404, "not found or expired")
+        return {"ok": True}
 
     @app.get("/api/admin/status")
     async def admin_status(c: Ctx = Depends(admin)):

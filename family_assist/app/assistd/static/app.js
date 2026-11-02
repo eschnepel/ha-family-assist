@@ -433,6 +433,19 @@ async function renameConv(c) {
 
 // --- admin view --------------------------------------------------------------
 
+async function deleteConv(c) {
+  if (!confirm(t("deleteConfirm"))) return;
+  try {
+    await api(`conversations/${c.id}`, { method: "DELETE" });
+    clearTimeout(pollTimer);
+    if (current && current.id === c.id) current = null;
+    await loadConvs();
+    await showChat();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
 function fmtTime(ts) { return ts ? new Date(ts * 1000).toLocaleString(lang) : t("never"); }
 const yesNo = (v) => (v === null || v === undefined ? t("unknown") : v ? t("yes") : t("no"));
 
@@ -465,10 +478,11 @@ function githubPanel() {
 }
 
 async function adminView() {
-  const [settings, status, family] = await Promise.all([
+  const [settings, status, family, deleted] = await Promise.all([
     api("admin/settings").then((r) => r.json()),
     api("admin/status").then((r) => r.json()),
     api("family").then((r) => r.json()),
+    api("admin/deleted").then((r) => r.json()),
   ]);
   const rows = settings.environments.map((e) => ({ id: e.id, name: e.name, url: e.repo_url, branch: e.branch }));
   const envList = h("div", { class: "envs" });
@@ -549,6 +563,16 @@ async function adminView() {
       h("li", {}, `${t("ollama")}: ${status.options.ollama_url}`),
       h("li", {}, `${t("queue")}: ${status.queue.running} ${t("running")}, ${status.queue.waiting} ${t("waiting")}`)),
     envStatuses.map(envStatus),
+    h("h2", {}, t("deletedChats")),
+    h("div", { class: "meta" }, t("deletedNote")),
+    h("table", {}, deleted.map((d) => h("tr", {},
+      h("td", {}, d.title || "..."),
+      h("td", {}, (family.find((u) => u.id === d.user_id) || { alias: d.user_id }).alias),
+      h("td", { class: "meta" }, `${d.messages} ${t("messagesCount")}, ${t("deletedOn")} ${fmtTime(d.deleted_at)}`),
+      h("td", {}, h("button", { type: "button", class: "secondary small", onclick: act(async () => {
+        await api(`admin/deleted/${encodeURIComponent(d.user_id)}/${d.id}/restore`, { method: "POST" });
+        await loadConvs();
+      }) }, t("restore")))))),
   ].filter(Boolean));
   return view;
 }
@@ -606,7 +630,9 @@ function sidebar() {
       h("button", { type: "button", class: "conv" + (current && current.id === c.id ? " active" : ""),
         onclick: () => openConversation(c.id) }, c.title || "..."),
       h("button", { type: "button", class: "conv-edit", title: t("renameChat"), "aria-label": t("renameChat"),
-        onclick: (e) => { e.stopPropagation(); renameConv(c); } }, "✎"))));
+        onclick: (e) => { e.stopPropagation(); renameConv(c); } }, "✎"),
+      h("button", { type: "button", class: "conv-edit", title: t("deleteChat"), "aria-label": t("deleteChat"),
+        onclick: (e) => { e.stopPropagation(); deleteConv(c); } }, "🗑"))));
 }
 
 async function renderShell() {
