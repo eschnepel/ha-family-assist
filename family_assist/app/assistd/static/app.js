@@ -629,9 +629,9 @@ function sidebar() {
     convs.map((c) => h("div", { class: "conv-row" },
       h("button", { type: "button", class: "conv" + (current && current.id === c.id ? " active" : ""),
         onclick: () => openConversation(c.id) }, c.title || "..."),
-      h("button", { type: "button", class: "conv-edit", title: t("renameChat"), "aria-label": t("renameChat"),
+      h("button", { type: "button", class: "conv-edit conv-rename", title: t("renameChat"), "aria-label": t("renameChat"),
         onclick: (e) => { e.stopPropagation(); renameConv(c); } }, "🖉"),
-      h("button", { type: "button", class: "conv-edit conv-delete", title: t("deleteChat"), "aria-label": t("deleteChat"),
+      h("button", { type: "button", class: "conv-edit", title: t("deleteChat"), "aria-label": t("deleteChat"),
         onclick: (e) => { e.stopPropagation(); deleteConv(c); } }, "🗑"))));
 }
 
