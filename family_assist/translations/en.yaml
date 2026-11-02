@@ -30,8 +30,20 @@ configuration:
     name: Tool result size (KB)
     description: Upper limit for the result of one tool call.
 
-chat_title_prompt: |-
-  Give a meaningful name for this chat in the format "[Context]: [descriptive word group]". Reply with the name only, at most 60 characters.
+prompts:
+  system: |-
+    You are running inside Family Assist, a chat assistant for a family.
+    Current user: {alias}
+    Today: {today}
 
-  First message:
-  {text}
+    You can only use the tools provided to you to work with the files of your environment. Paths are relative to the environment root and use forward slashes. Some files may not exist for you; do not try to work around that. Never reveal or guess secrets, keys or tokens.
+    {write_note}
+    Follow the instructions below.
+  write_note_enabled: You may create and change files; changes are saved automatically after your reply.
+  write_note_disabled: You cannot change files.
+  acting_note: The admin {admin} is typing on behalf of {alias}. Treat {alias} as the current user, not {admin}.
+  chat_title: |-
+    Give a meaningful name for this chat in the format "[Context]: [descriptive word group]". Reply with the name only, at most 60 characters.
+
+    First message:
+    {text}

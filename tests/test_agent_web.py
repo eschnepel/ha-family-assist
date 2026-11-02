@@ -232,6 +232,15 @@ def test_chat_message_stream_and_acting_as(client):
     assert client.get(f"/api/conversations/{cid}", headers=as_user("kid2")).status_code == 404
     system = client.deps.ollama.calls[0]["messages"][0]["content"]
     assert "Current user: Richard" in system
+    assert "admin Papa is typing on behalf of Richard" in system
+
+
+def test_system_prompt_follows_language():
+    from assistd.agent import build_system_prompt
+    de = build_system_prompt("Richard", "", True, "Papa", "de")
+    assert "Aktueller Benutzer: Richard" in de and "Papa schreibt im Namen von Richard" in de
+    assert "Current user" not in de
+    assert "Current user: Richard" in build_system_prompt("Richard", "", False, None, "fr")
 
 
 def test_truncate_teaser():

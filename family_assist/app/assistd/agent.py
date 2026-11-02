@@ -25,20 +25,6 @@ ROOT_AGENTS_MAX_BYTES = 64 * 1024
 HISTORY_MESSAGES = 20
 KEEPALIVE_SECONDS = 10.0
 
-PREAMBLE = """\
-You are running inside Family Assist, a chat assistant for a family.
-Current user: {alias}
-Today: {today}
-
-You can only use the tools provided to you to work with the files of your environment. \
-Paths are relative to the environment root and use forward slashes. \
-Some files may not exist for you; do not try to work around that. \
-Never reveal or guess secrets, keys or tokens.
-{write_note}
-Follow the instructions below.
-
-"""
-
 _FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,100}$")
 
@@ -100,13 +86,14 @@ def read_root_agents(root) -> tuple[str, str | None]:
     return text, model
 
 
-def build_system_prompt(alias: str, agents_text: str, can_write: bool) -> str:
-    write_note = (
-        "You may create and change files; changes are saved automatically after your reply."
-        if can_write
-        else "You cannot change files."
-    )
-    return PREAMBLE.format(alias=alias, today=dt.date.today().isoformat(), write_note=write_note) + agents_text
+def build_system_prompt(alias: str, agents_text: str, can_write: bool, acted_by: str | None = None,
+                        lang: str = "en") -> str:
+    write_note = prompt_text(lang, "write_note_enabled" if can_write else "write_note_disabled") or ""
+    if acted_by:
+        acting = prompt_text(lang, "acting_note") or ""
+        write_note += "\n" + acting.format(admin=acted_by, alias=alias)
+    system = prompt_text(lang, "system") or ""
+    return system.format(alias=alias, today=dt.date.today().isoformat(), write_note=write_note) + "\n\n" + agents_text
 
 
 def history_messages(conv: dict) -> list[dict]:
@@ -171,7 +158,8 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         if images:
             model = options.vision_model or model
         system = build_system_prompt(principal.alias, agents_text, settings.allow_commits and bool(
-            set(enabled) & {"create_file", "write_file", "append_file", "replace_in_file"}))
+            set(enabled) & {"create_file", "write_file", "append_file", "replace_in_file"}),
+            principal.acted_by_alias, lang)
         last_user = {"role": "user", "content": text}
         if images:
             last_user["images"] = [i.split(",", 1)[1] for i in images]
@@ -289,16 +277,23 @@ TRANSLATIONS_DIR = Path(__file__).resolve().parents[2] / "translations"
 TITLE_MAX = 60
 
 
-def title_prompt(lang: str, text: str) -> str | None:
+def prompt_text(lang: str, key: str) -> str | None:
+    """A prompt from the `prompts` section of the translation file; falls back to English."""
     for code in (lang, "en"):
         try:
             data = yaml.safe_load((TRANSLATIONS_DIR / f"{code}.yaml").read_text(encoding="utf-8"))
         except (OSError, yaml.YAMLError):
             continue
-        template = data.get("chat_title_prompt") if isinstance(data, dict) else None
-        if isinstance(template, str):
-            return template.replace("{text}", text)
+        prompts = data.get("prompts") if isinstance(data, dict) else None
+        value = prompts.get(key) if isinstance(prompts, dict) else None
+        if isinstance(value, str):
+            return value
     return None
+
+
+def title_prompt(lang: str, text: str) -> str | None:
+    template = prompt_text(lang, "chat_title")
+    return template.replace("{text}", text) if template else None
 
 
 async def make_teaser(ollama: OllamaClient, model: str, text: str, lang: str, num_ctx: int) -> str:
