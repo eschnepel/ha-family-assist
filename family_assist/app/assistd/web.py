@@ -27,6 +27,7 @@ from .config import (DEFAULT_ENV_ID, EnvConfig, Settings, ValidationError, clean
 from .ghcli import GhError
 from .gitenv import BusyError, GitError
 from .identity import HAUser, UserDirectory, UserDirectoryError
+from .questions import QuestionError
 from .rules import Rules
 from .tools import Sandbox, ToolError, effective_tools, unknown_tool_names
 
@@ -70,6 +71,12 @@ class MessageIn(BaseModel):
             except (binascii.Error, ValueError):
                 raise ValueError("invalid image") from None
         return images
+
+
+class AnswerIn(BaseModel):
+    id: str = Field(max_length=64)
+    answer: str | list[str] | None = None
+    skipped: bool = False
 
 
 class EnvIn(BaseModel):
@@ -251,8 +258,10 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return {"id": conv["id"]}
 
     def public(conv: dict, uid: str) -> dict:
+        pending = deps.pending.get((uid, conv["id"]))
         return {**{k: v for k, v in conv.items() if k != "loaded_agents"},
-                "busy": (uid, conv["id"]) in state.running}
+                "busy": (uid, conv["id"]) in state.running,
+                "question": pending.public() if pending else None}
 
     @app.get("/api/conversations/{cid}")
     async def get_conversation(cid: str, c: Ctx = Depends(ctx)):
@@ -316,6 +325,17 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
         return StreamingResponse(stream(), media_type="text/event-stream",
                                  headers={"X-Accel-Buffering": "no"})
+
+    @app.post("/api/conversations/{cid}/answer")
+    async def answer_question(cid: str, body: AnswerIn, c: Ctx = Depends(ctx)):
+        pending = deps.pending.get((c.eff.id, cid))
+        if pending is None or pending.id != body.id:
+            raise HTTPException(409, "no such question is waiting")
+        try:
+            pending.answer(body.answer, body.skipped)
+        except QuestionError as exc:
+            raise HTTPException(400, str(exc)) from None
+        return {"ok": True}
 
     def changed_files(conv: dict) -> list[str]:
         """Paths the assistant wrote in this conversation; the only files offered for download."""

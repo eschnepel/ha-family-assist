@@ -235,9 +235,50 @@ function setMarkdown(el, text, final) {
 
 function toolBlock(entry) {
   const args = Object.entries(entry.args || {}).map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`).join("\n");
+  const label = entry.name === "ask_user" ? `${t("question")}: ${(entry.args && entry.args.question) || ""}`
+    : `${t("tool")}: ${entry.name} ${entry.args && entry.args.path !== undefined ? entry.args.path : ""}`;
   return h("details", { class: "tool" },
-    h("summary", { class: entry.ok ? "" : "err" }, `${t("tool")}: ${entry.name} ${entry.args && entry.args.path !== undefined ? entry.args.path : ""}`),
+    h("summary", { class: entry.ok ? "" : "err" }, label),
     h("pre", {}, args + "\n--- " + t("result") + " ---\n" + entry.result));
+}
+
+// One question of the ask_user tool; the answer goes to the server, the turn then continues.
+function questionForm(q, convId) {
+  const err = h("div", { class: "err" });
+  let read;
+  let field;
+  if (q.kind === "text") {
+    field = h("textarea", { rows: "3", maxlength: "4000", placeholder: t("answerHint") });
+    read = () => field.value.trim() || null;
+  } else {
+    const multi = q.kind === "multiple";
+    const inputs = q.options.map((o) => h("input", { type: multi ? "checkbox" : "radio", name: "q-" + q.id, value: o }));
+    field = h("div", {}, q.options.map((o, i) => h("label", { class: "choice" }, inputs[i], o)));
+    read = () => {
+      const picked = inputs.filter((i) => i.checked).map((i) => i.value);
+      return multi ? (picked.length ? picked : null) : (picked[0] ?? null);
+    };
+  }
+  const answerBtn = h("button", { type: "submit" }, t("answerBtn"));
+  const skipBtn = q.required ? null : h("button", { type: "button", class: "secondary" }, t("skipBtn"));
+  const form = h("form", { class: "question" }, h("strong", {}, q.question), field, err, h("div", { class: "row" }, answerBtn, skipBtn));
+  const submit = async (skip) => {
+    const answer = skip ? null : read();
+    if (answer === null && q.required) { err.textContent = t("answerRequired"); return; }
+    answerBtn.disabled = true;
+    if (skipBtn) skipBtn.disabled = true;
+    try {
+      await api(`conversations/${convId}/answer`, { method: "POST", body: { id: q.id, answer, skipped: answer === null } });
+      form.remove();
+    } catch (e) {
+      err.textContent = e.message;
+      answerBtn.disabled = false;
+      if (skipBtn) skipBtn.disabled = false;
+    }
+  };
+  form.addEventListener("submit", (e) => { e.preventDefault(); submit(false); });
+  if (skipBtn) skipBtn.addEventListener("click", () => submit(true));
+  return form;
 }
 
 async function saveFile(path, fallbackName) {
@@ -305,6 +346,7 @@ async function sendMessage(text, files, box, setStatus, onDone) {
     else if (ev.type === "start") setStatus(t("thinking"));
     else if (ev.type === "token") { raw += ev.text; setMarkdown(body, raw, false); }
     else if (ev.type === "tool") live.insertBefore(toolBlock(ev), body);
+    else if (ev.type === "question") { live.append(questionForm(ev, current.id)); setStatus(t("question")); }
     else if (ev.type === "notice") live.append(h("div", { class: "meta warn" }, ev.text === "tool_limit" ? t("toolLimit") : t("empty")));
     else if (ev.type === "error") live.append(h("div", { class: "err" }, ev.text));
     else if (ev.type === "commit") { const c = commitLine(ev); if (c) live.append(c); }
@@ -401,9 +443,18 @@ function chatView() {
     status.textContent = t("busy");
     setBusy(true);
     clearTimeout(pollTimer);
+    let shownQuestion = null;
     const poll = async () => {
       const fresh = await (await api(`conversations/${current.id}`)).json();
-      if (fresh.busy) { pollTimer = setTimeout(poll, 3000); return; }
+      if (fresh.busy) {
+        if (fresh.question && fresh.question.id !== shownQuestion) {
+          shownQuestion = fresh.question.id;
+          box.append(h("div", { class: "msg assistant" }, questionForm(fresh.question, current.id)));
+          box.scrollTop = box.scrollHeight;
+        }
+        pollTimer = setTimeout(poll, 3000);
+        return;
+      }
       current = fresh; renderMessages(box); status.textContent = ""; setBusy(false);
     };
     pollTimer = setTimeout(poll, 3000);

@@ -15,15 +15,17 @@ from .genqueue import GenerationQueue
 from .ghcli import GitHubCli
 from .gitenv import AgentEnvironment, GitError
 from .ollama import OllamaClient, OllamaError
+from .questions import ASK_USER, PendingQuestion, QuestionError, parse_question
 from .rules import Rules
 from .store import ConversationStore
-from .tools import Sandbox, effective_tools, tool_schemas
+from .tools import Outcome, Sandbox, effective_tools, tool_schemas
 
 log = logging.getLogger(__name__)
 
 ROOT_AGENTS_MAX_BYTES = 64 * 1024
 HISTORY_MESSAGES = 20
 KEEPALIVE_SECONDS = 10.0
+ANSWER_TIMEOUT_SECONDS = 15 * 60.0
 
 _FRONT_MATTER = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
 _MODEL_RE = re.compile(r"^[A-Za-z0-9_.:/-]{1,100}$")
@@ -38,6 +40,7 @@ class Deps:
     store: ConversationStore
     queue: GenerationQueue
     gh: GitHubCli | None = None
+    pending: dict[tuple[str, str], PendingQuestion] = field(default_factory=dict, repr=False)  # (user, conversation)
     _envs: dict[str, AgentEnvironment] = field(default_factory=dict, repr=False)
 
     def env_for(self, env_id: str) -> AgentEnvironment:
@@ -141,6 +144,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
     deps.store.save(conv)
 
     assistant: dict = {"role": "assistant", "content": "", "tools": [], "ts": _now()}
+    pending_key = (principal.id, conv["id"])
     changed: list[str] = []
     ticket = None
     try:
@@ -151,8 +155,8 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
             raise OllamaError("The agent environment is not ready yet. Ask an admin to configure it.")
         rules = Rules.load(env.path)
         enabled = effective_tools(rules, settings.allow_commits)
-        sandbox = Sandbox(env.path, rules, enabled, max_result_bytes=options.max_tool_result_kb * 1024,
-                          write_guard=env.write_guard)
+        sandbox = Sandbox(env.path, rules, [n for n in enabled if n != ASK_USER],
+                          max_result_bytes=options.max_tool_result_kb * 1024, write_guard=env.write_guard)
         agents_text, front_model = read_root_agents(env.path)
         model = front_model or options.default_model
         if images:
@@ -166,19 +170,24 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         messages = [{"role": "system", "content": system}, *history, last_user]
         schemas = tool_schemas(enabled)
 
-        ticket = deps.queue.enqueue()
-        position = None
-        while not ticket.granted.is_set():
-            now_position = deps.queue.position(ticket)
-            if now_position != position:
-                position = now_position
-                yield {"type": "queued", "position": position}
-            ticket.moved.clear()
-            try:
-                await asyncio.wait_for(ticket.moved.wait(), KEEPALIVE_SECONDS)
-            except asyncio.TimeoutError:
-                pass
-        yield {"type": "start"}
+        async def wait_for_slot() -> AsyncIterator[dict]:
+            nonlocal ticket
+            ticket = deps.queue.enqueue()
+            position = None
+            while not ticket.granted.is_set():
+                now_position = deps.queue.position(ticket)
+                if now_position != position:
+                    position = now_position
+                    yield {"type": "queued", "position": position}
+                ticket.moved.clear()
+                try:
+                    await asyncio.wait_for(ticket.moved.wait(), KEEPALIVE_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+            yield {"type": "start"}
+
+        async for event in wait_for_slot():
+            yield event
 
         calls_made = 0
         limit_hit = False
@@ -205,7 +214,28 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                 function = call.get("function") or {}
                 name = str(function.get("name", ""))
                 args = function.get("arguments") or {}
-                outcome = await asyncio.to_thread(sandbox.execute, name, args)
+                if name == ASK_USER:
+                    try:
+                        question = parse_question(args)
+                    except QuestionError as exc:
+                        outcome = Outcome(f"Error: {exc}", ok=False)
+                    else:
+                        # Waiting for a person must not hold a generation slot.
+                        deps.queue.release(ticket)
+                        ticket = None
+                        pending = PendingQuestion(question)
+                        deps.pending[pending_key] = pending
+                        yield {"type": "question", **pending.public()}
+                        try:
+                            outcome = Outcome(await asyncio.wait_for(pending.future, ANSWER_TIMEOUT_SECONDS))
+                        except asyncio.TimeoutError:
+                            outcome = Outcome("The user did not answer in time.", ok=False)
+                        finally:
+                            deps.pending.pop(pending_key, None)
+                        async for event in wait_for_slot():
+                            yield event
+                else:
+                    outcome = await asyncio.to_thread(sandbox.execute, name, args)
                 result = outcome.text
                 if outcome.ok:
                     for folder, extra in nested_instruction_dirs(sandbox, outcome.touched, conv["loaded_agents"]):

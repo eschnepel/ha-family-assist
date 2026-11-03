@@ -13,9 +13,11 @@ from typing import Callable, ContextManager
 import pathspec
 import regex
 
+from .questions import ASK_USER, SCHEMA as ASK_USER_SCHEMA
 from .rules import Rules
 
 READ_TOOLS = ("list_dir", "find", "grep", "read_file")
+INTERACTIVE_TOOLS = (ASK_USER,)  # handled by the agent loop, not by the Sandbox
 WRITE_TOOLS = ("create_file", "write_file", "append_file", "replace_in_file")
 
 MAX_FILE_BYTES = 256 * 1024
@@ -42,7 +44,7 @@ class Outcome:
 
 
 def effective_tools(rules: Rules, allow_commits: bool) -> list[str]:
-    available = READ_TOOLS + (WRITE_TOOLS if allow_commits else ())
+    available = READ_TOOLS + INTERACTIVE_TOOLS + (WRITE_TOOLS if allow_commits else ())
     if rules.tools is None:
         return list(available)
     return [t for t in available if t in rules.tools]
@@ -51,7 +53,7 @@ def effective_tools(rules: Rules, allow_commits: bool) -> list[str]:
 def unknown_tool_names(rules: Rules) -> list[str]:
     if rules.tools is None:
         return []
-    return sorted(rules.tools - set(READ_TOOLS) - set(WRITE_TOOLS))
+    return sorted(rules.tools - set(READ_TOOLS) - set(INTERACTIVE_TOOLS) - set(WRITE_TOOLS))
 
 
 def _obj(properties: dict, required: list[str]) -> dict:
@@ -60,6 +62,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 
 _STR = {"type": "string"}
 SCHEMAS: dict[str, tuple[str, dict]] = {
+    ASK_USER: ASK_USER_SCHEMA,
     "list_dir": (
         "List the files and folders in a folder of the environment. Folders end with '/'.",
         _obj({"path": {**_STR, "description": "Folder relative to the environment root; empty for the root"}}, []),

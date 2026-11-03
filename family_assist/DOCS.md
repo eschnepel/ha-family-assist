@@ -16,7 +16,7 @@ Optional file `.family_assist.yaml` in the repository root, with three optional 
 
 - `hidden`: paths (`.gitignore` syntax) the assistant cannot see.
 - `readonly`: paths (`.gitignore` syntax) the assistant can read but not change.
-- `tools`: restricts the assistant to the listed tools (`list_dir`, `find`, `grep`, `read_file`, `create_file`, `write_file`, `append_file`, `replace_in_file`).
+- `tools`: restricts the assistant to the listed tools (`list_dir`, `find`, `grep`, `read_file`, `ask_user`, `create_file`, `write_file`, `append_file`, `replace_in_file`).
 
 `.git`, `.family_assist.yaml` and every `AGENTS.md` are always protected. The root `AGENTS.md` is the system prompt; an optional `modell:` in its front matter selects the model.
 

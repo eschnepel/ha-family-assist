@@ -10,6 +10,7 @@
   busy: "Eine Antwort wird erzeugt...", toolLimit: "Werkzeuglimit erreicht; die Antwort wurde abgebrochen.",
   empty: "Das Modell hat eine leere Antwort geliefert.", commitDone: "Gespeichert", commitFailed: "Speichern fehlgeschlagen",
   pushed: "veröffentlicht", notPushed: "nicht veröffentlicht", tool: "Werkzeug", result: "Ergebnis",
+  question: "Frage", answerBtn: "Antworten", skipBtn: "Überspringen", answerRequired: "Bitte beantworte diese Frage.", answerHint: "Deine Antwort...",
   settings: "Agent-Umgebung", repoUrl: "Repository-URL (https)", branch: "Branch",
   environments: "Agent-Umgebungen", environment: "Umgebung", envName: "Name", addEnv: "Umgebung hinzufügen",
   removeEnv: "Entfernen", removeConfirm: "Diese Umgebung entfernen? Ihre Unterhaltungen werden ausgeblendet.", noEnv: "Keine Umgebung eingerichtet.",

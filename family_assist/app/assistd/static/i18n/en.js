@@ -10,6 +10,7 @@
   busy: "A reply is being generated...", toolLimit: "Tool limit reached; the reply was stopped.",
   empty: "The model returned an empty reply.", commitDone: "Saved", commitFailed: "Saving failed",
   pushed: "pushed", notPushed: "not pushed", tool: "Tool", result: "Result",
+  question: "Question", answerBtn: "Answer", skipBtn: "Skip", answerRequired: "Please answer this question.", answerHint: "Your answer...",
   settings: "Agent environment", repoUrl: "Repository URL (https)", branch: "Branch",
   environments: "Agent environments", environment: "Environment", envName: "Name", addEnv: "Add environment",
   removeEnv: "Remove", removeConfirm: "Remove this environment? Its conversations are hidden.", noEnv: "No environment configured.",

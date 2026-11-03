@@ -49,13 +49,14 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
   | `find` | read | glob for file names |
   | `grep` | read | regex search in text files |
   | `read_file` | read | read a file, optionally a line range |
+  | `ask_user` | interactive | ask the user one question (single choice, multiple choice or free text; mandatory or skippable) |
   | `create_file` | write | create a new file, fails if it exists |
   | `write_file` | write | create or overwrite a whole file |
   | `append_file` | write | append text to a file |
   | `replace_in_file` | write | one or several exact-string replacements, all-or-nothing, each string must match exactly once |
 
   There is no delete, move or rename in v1.
-- R5.2 Tool Allowlist: only listed tools are usable. A call to an unlisted tool is rejected with an error result. Without `tools` in `.family_assist.yaml` the list is the four read tools, plus the four write tools when Commit Permission is on.
+- R5.2 Tool Allowlist: only listed tools are usable. A call to an unlisted tool is rejected with an error result. Without `tools` in `.family_assist.yaml` the list is the four read tools and `ask_user`, plus the four write tools when Commit Permission is on.
 - R5.3 `.family_assist.yaml` (optional, repo root) is the single repository config file, a YAML mapping with the optional lists `tools`, `hidden` and `readonly`. Invalid YAML or a wrongly typed key is ignored with an admin warning. `tools` holds tool names; when present, only the listed tools are enabled, and it can only narrow the catalog, never grant write tools while Commit Permission is off. Unknown names are ignored with an admin warning.
 - R5.4 `hidden` and `readonly` hold `.gitignore`-syntax patterns (globs, `/` anchoring, `!` negation). Root file only; nested copies are not supported. They apply to everyone including admins and are maintained outside Home Assistant.
 - R5.5 A Hidden Path behaves as if it does not exist: absent from `list_dir`, `find`, `grep` and context loading; reads and writes return "not found". A Hidden Path's nested `AGENTS.md` is never loaded. A rule that matches the root `AGENTS.md` is ignored with an admin warning.
@@ -64,6 +65,7 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
 - R5.8 The rules are defined only in the repository; the admin UI shows the effective rules read-only. Rule changes take effect after Sync.
 - R5.9 Limits: write files are capped at 256 KB; each tool result at `max_tool_result_kb`; each turn at `max_tool_calls_per_turn` calls. When the limit is reached the turn ends with a visible note.
 - R5.10 Tool calls are shown in the chat, collapsed by default; expanding shows the full call and result in a scrollable mini panel. They are always visible to the admin.
+- R5.11 `ask_user` shows exactly one question per call in the chat: kind `single` or `multiple` (2 to 20 options) or `text`, `required` (default) or skippable. The turn waits for the answer, which becomes the tool result (a skipped question yields a fixed "skipped" result); several questions are asked by several calls, one after the other. While waiting the turn gives up its queue slot; after 15 minutes without an answer the tool returns an error result. A mandatory question cannot be skipped; answers are checked against the options on the server.
 
 ## 6. Writing back to git
 

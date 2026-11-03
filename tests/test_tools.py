@@ -1,5 +1,6 @@
 from assistd.rules import Rules
-from assistd.tools import Sandbox, effective_tools, unknown_tool_names, READ_TOOLS, WRITE_TOOLS
+from assistd.tools import (INTERACTIVE_TOOLS, READ_TOOLS, WRITE_TOOLS, Sandbox, effective_tools,
+                           unknown_tool_names)
 from conftest import make_dir_link, write
 
 ALL = list(READ_TOOLS + WRITE_TOOLS)
@@ -151,8 +152,8 @@ def test_tool_allowlist(checkout):
 
 def test_effective_tools_follow_commit_permission_and_agenttools(checkout):
     rules = Rules.load(checkout)
-    assert effective_tools(rules, False) == list(READ_TOOLS)
-    assert effective_tools(rules, True) == ALL
+    assert effective_tools(rules, False) == list(READ_TOOLS + INTERACTIVE_TOOLS)
+    assert effective_tools(rules, True) == list(READ_TOOLS + INTERACTIVE_TOOLS + WRITE_TOOLS)
     write(checkout, ".family_assist.yaml", "tools:\n  - list_dir\n  - read_file\n  - write_file\n  - bash\n")
     rules = Rules.load(checkout)
     assert effective_tools(rules, False) == ["list_dir", "read_file"]

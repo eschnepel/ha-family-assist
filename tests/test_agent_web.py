@@ -86,7 +86,7 @@ def test_turn_streams_and_persists(tmp_path, checkout):
     assert first["model"] == "test-model"  # from the front matter of AGENTS.md
     system = first["messages"][0]["content"]
     assert "Current user: Marten" in system and "# Rules" in system
-    assert [t["function"]["name"] for t in first["tools"]] == ["list_dir", "find", "grep", "read_file"]
+    assert [t["function"]["name"] for t in first["tools"]] == ["list_dir", "find", "grep", "read_file", "ask_user"]
 
 
 def test_tool_loop_hidden_path_and_history_trimming(tmp_path, checkout):
@@ -310,7 +310,7 @@ def test_admin_status_reports_rules_and_models(client):
     status = client.get("/api/admin/status", headers=as_user("admin1")).json()
     first = status["environments"][0]
     assert first["rules"]["hidden"] == ["/Scripts/"]
-    assert first["rules"]["tools"] == ["list_dir", "find", "grep", "read_file"]
+    assert first["rules"]["tools"] == ["list_dir", "find", "grep", "read_file", "ask_user"]
     assert first["model"]["model"] == "test-model" and status["options"]["api_key_set"] is False
 
 
