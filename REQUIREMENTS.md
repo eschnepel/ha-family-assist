@@ -41,7 +41,7 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
 
 ## 5. Tools and sandbox (ADR 0002)
 
-- R5.1 The assistant has a fixed catalog of tools implemented in the backend, with no shell, no script execution and no network access:
+- R5.1 The assistant has a fixed catalog of tools implemented in the backend, with no shell, no script execution and no network access except `load_skill`:
 
   | Tool | Kind | Purpose |
   | -- | -- | -- |
@@ -50,6 +50,7 @@ Settled requirements from the design interview. Terms follow [GLOSSARY.md](./GLO
   | `grep` | read | regex search in text files |
   | `read_file` | read | read a file, optionally a line range |
   | `ask_user` | interactive | ask the user one question (single choice, multiple choice or free text; mandatory or skippable) |
+  | `load_skill` | remote | load the `SKILL.md` of one of four curated skills of `github.com/mattpocock/skills` (`domain-modeling`, `grill-me`, `grilling`, `grill-with-docs`; also Markdown resource files in the same skill folder, e.g. `ADR-FORMAT.md`); no other URL or skill can be fetched |
   | `create_file` | write | create a new file, fails if it exists |
   | `write_file` | write | create or overwrite a whole file |
   | `append_file` | write | append text to a file |

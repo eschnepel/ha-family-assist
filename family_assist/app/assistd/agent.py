@@ -17,6 +17,7 @@ from .gitenv import AgentEnvironment, GitError
 from .ollama import OllamaClient, OllamaError
 from .questions import ASK_USER, PendingQuestion, QuestionError, parse_question
 from .rules import Rules
+from .skills import LOAD_SKILL, SkillError, load_skill
 from .store import ConversationStore
 from .tools import Outcome, Sandbox, effective_tools, tool_schemas
 
@@ -155,7 +156,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
             raise OllamaError("The agent environment is not ready yet. Ask an admin to configure it.")
         rules = Rules.load(env.path)
         enabled = effective_tools(rules, settings.allow_commits)
-        sandbox = Sandbox(env.path, rules, [n for n in enabled if n != ASK_USER],
+        sandbox = Sandbox(env.path, rules, [n for n in enabled if n not in (ASK_USER, LOAD_SKILL)],
                           max_result_bytes=options.max_tool_result_kb * 1024, write_guard=env.write_guard)
         agents_text, front_model = read_root_agents(env.path)
         model = front_model or options.default_model
@@ -234,6 +235,11 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                             deps.pending.pop(pending_key, None)
                         async for event in wait_for_slot():
                             yield event
+                elif name == LOAD_SKILL and name in enabled:
+                    try:
+                        outcome = Outcome(await load_skill(args))
+                    except SkillError as exc:
+                        outcome = Outcome(f"Error: {exc}", ok=False)
                 else:
                     outcome = await asyncio.to_thread(sandbox.execute, name, args)
                 result = outcome.text

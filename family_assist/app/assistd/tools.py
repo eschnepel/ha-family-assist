@@ -15,9 +15,10 @@ import regex
 
 from .questions import ASK_USER, SCHEMA as ASK_USER_SCHEMA
 from .rules import Rules
+from .skills import LOAD_SKILL, SCHEMA as LOAD_SKILL_SCHEMA
 
 READ_TOOLS = ("list_dir", "find", "grep", "read_file")
-INTERACTIVE_TOOLS = (ASK_USER,)  # handled by the agent loop, not by the Sandbox
+INTERACTIVE_TOOLS = (ASK_USER, LOAD_SKILL)  # handled by the agent loop, not by the Sandbox
 WRITE_TOOLS = ("create_file", "write_file", "append_file", "replace_in_file")
 
 MAX_FILE_BYTES = 256 * 1024
@@ -63,6 +64,7 @@ def _obj(properties: dict, required: list[str]) -> dict:
 _STR = {"type": "string"}
 SCHEMAS: dict[str, tuple[str, dict]] = {
     ASK_USER: ASK_USER_SCHEMA,
+    LOAD_SKILL: LOAD_SKILL_SCHEMA,
     "list_dir": (
         "List the files and folders in a folder of the environment. Folders end with '/'.",
         _obj({"path": {**_STR, "description": "Folder relative to the environment root; empty for the root"}}, []),
