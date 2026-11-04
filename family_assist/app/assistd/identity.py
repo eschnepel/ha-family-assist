@@ -45,19 +45,26 @@ class SupervisorUsers:
 
     async def _fetch(self) -> list[HAUser]:
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(SUPERVISOR_WS, timeout=10) as ws:
-                    await ws.receive_json(timeout=10)
-                    await ws.send_json({"type": "auth", "access_token": self._token})
-                    if (await ws.receive_json(timeout=10)).get("type") != "auth_ok":
-                        raise UserDirectoryError("Home Assistant rejected the add-on token")
-                    await ws.send_json({"id": 1, "type": "config/auth/list"})
-                    while True:
-                        message = await ws.receive_json(timeout=10)
-                        if message.get("id") == 1:
-                            break
-        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as exc:
-            raise UserDirectoryError(f"Cannot read Home Assistant users ({type(exc).__name__})") from None
+            async with (
+                aiohttp.ClientSession() as session,
+                session.ws_connect(
+                    SUPERVISOR_WS,
+                    timeout=10,  # type: ignore[call-overload]  # int accepted at runtime
+                ) as ws,
+            ):
+                await ws.receive_json(timeout=10)
+                await ws.send_json({"type": "auth", "access_token": self._token})
+                if (await ws.receive_json(timeout=10)).get("type") != "auth_ok":
+                    raise UserDirectoryError("Home Assistant rejected the add-on token")
+                await ws.send_json({"id": 1, "type": "config/auth/list"})
+                while True:
+                    message = await ws.receive_json(timeout=10)
+                    if message.get("id") == 1:
+                        break
+        except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
+            raise UserDirectoryError(
+                f"Cannot read Home Assistant users ({type(exc).__name__})"
+            ) from None
         if not message.get("success"):
             raise UserDirectoryError("Home Assistant refused to list users")
         users = []
@@ -65,7 +72,13 @@ class SupervisorUsers:
             if raw.get("system_generated") or not raw.get("is_active", True):
                 continue
             is_admin = bool(raw.get("is_owner")) or "system-admin" in raw.get("group_ids", [])
-            users.append(HAUser(str(raw["id"]), str(raw.get("name") or raw.get("username") or raw["id"]), is_admin))
+            users.append(
+                HAUser(
+                    str(raw["id"]),
+                    str(raw.get("name") or raw.get("username") or raw["id"]),
+                    is_admin,
+                )
+            )
         return users
 
 

@@ -8,6 +8,7 @@ import tempfile
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit
 
 DATA_DIR = Path(os.environ.get("FA_DATA", "/data"))
@@ -141,11 +142,18 @@ class SettingsStore:
                 if isinstance(item, dict) and env_fields <= item.keys():
                     settings.environments.append(EnvConfig(**{k: item[k] for k in env_fields}))
             if settings.repo_url:
-                # Migration: the former single repository becomes the default environment, which keeps
-                # its checkout and its conversations (conversations without an environment belong to it).
+                # Migration: the former single repository becomes the default environment,
+                # which keeps its checkout and its conversations (conversations without an
+                # environment belong to it).
                 if not settings.environments:
-                    settings.environments.append(EnvConfig(
-                        DEFAULT_ENV_ID, name_from_url(settings.repo_url), settings.repo_url, settings.branch))
+                    settings.environments.append(
+                        EnvConfig(
+                            DEFAULT_ENV_ID,
+                            name_from_url(settings.repo_url),
+                            settings.repo_url,
+                            settings.branch,
+                        )
+                    )
                 settings.repo_url, settings.branch = "", "main"
                 write_json_atomic(self._settings_path, dataclasses.asdict(settings))
             return settings
@@ -163,7 +171,7 @@ class SettingsStore:
             write_json_atomic(self._secrets_path, {"git_token": token.strip()}, private=True)
 
     @staticmethod
-    def _read(path: Path) -> dict:
+    def _read(path: Path) -> dict[str, Any]:
         try:
             data = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):

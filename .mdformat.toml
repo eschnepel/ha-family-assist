@@ -1,0 +1,20 @@
+wrap = "keep"
+exclude = [
+    ".venv/**",
+    ".pytest_cache/**",
+    "**/vendor/**",
+]
+
+extensions = [      # options: a list of enabled extensions (default: all installed are enabled)
+    "gfm",
+    "tables",
+]
+codeformatters = [  # options: a list of enabled code formatter languages (default: all installed are enabled)
+    "python",
+    "json",
+    "toml",
+    "yaml",
+]
+
+[plugin.tables]
+compact_tables = true

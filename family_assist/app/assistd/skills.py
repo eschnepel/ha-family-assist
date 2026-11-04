@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import httpx
 
@@ -21,14 +22,19 @@ MAIN_FILE = "SKILL.md"
 RESOURCE_FILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\.md")
 
 SCHEMA = (
-    "Load the instructions of a curated skill and follow them for the current task. Available skills: "
-    + ", ".join(SKILLS) + ". A skill may refer to resource files in its own folder (e.g. 'ADR-FORMAT.md'); "
+    "Load the instructions of a curated skill and follow them for the current task. "
+    "Available skills: "
+    + ", ".join(SKILLS)
+    + ". A skill may refer to resource files in its own folder (e.g. 'ADR-FORMAT.md'); "
     "load them with the 'file' parameter.",
     {
         "type": "object",
         "properties": {
             "name": {"type": "string", "enum": list(SKILLS), "description": "Skill name"},
-            "file": {"type": "string", "description": f"Resource file of the skill; default '{MAIN_FILE}'"},
+            "file": {
+                "type": "string",
+                "description": f"Resource file of the skill; default '{MAIN_FILE}'",
+            },
         },
         "required": ["name"],
     },
@@ -39,7 +45,7 @@ class SkillError(Exception):
     pass
 
 
-async def load_skill(args, *, transport: httpx.AsyncBaseTransport | None = None) -> str:
+async def load_skill(args: Any, *, transport: httpx.AsyncBaseTransport | None = None) -> str:
     name = args.get("name") if isinstance(args, dict) else None
     if not isinstance(name, str) or name not in SKILLS:
         raise SkillError(f"unknown skill; available: {', '.join(SKILLS)}")
@@ -48,8 +54,9 @@ async def load_skill(args, *, transport: httpx.AsyncBaseTransport | None = None)
         raise SkillError("file must be a Markdown file name in the skill folder")
     url = f"{SKILL_BASE_URL}{SKILLS[name]}/{file}"
     try:
-        async with httpx.AsyncClient(timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False,
-                                     transport=transport) as client:
+        async with httpx.AsyncClient(
+            timeout=FETCH_TIMEOUT_SECONDS, follow_redirects=False, transport=transport
+        ) as client:
             response = await client.get(url)
     except httpx.HTTPError:
         raise SkillError("skill could not be loaded") from None

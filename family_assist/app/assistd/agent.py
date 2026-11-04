@@ -4,14 +4,15 @@ import asyncio
 import datetime as dt
 import logging
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any
 
 import yaml
 
-from .config import DEFAULT_ENV_ID, ENV_ID_RE, Options, SettingsStore
-from .genqueue import GenerationQueue
+from .config import DEFAULT_ENV_ID, ENV_ID_RE, Options, Settings, SettingsStore
+from .genqueue import GenerationQueue, Ticket
 from .ghcli import GitHubCli
 from .gitenv import AgentEnvironment, GitError
 from .ollama import OllamaClient, OllamaError
@@ -41,7 +42,9 @@ class Deps:
     store: ConversationStore
     queue: GenerationQueue
     gh: GitHubCli | None = None
-    pending: dict[tuple[str, str], PendingQuestion] = field(default_factory=dict, repr=False)  # (user, conversation)
+    pending: dict[tuple[str, str], PendingQuestion] = field(
+        default_factory=dict, repr=False
+    )  # (user, conversation)
     _envs: dict[str, AgentEnvironment] = field(default_factory=dict, repr=False)
 
     def env_for(self, env_id: str) -> AgentEnvironment:
@@ -51,8 +54,9 @@ class Deps:
         if not ENV_ID_RE.match(env_id):
             raise ValueError("invalid environment id")
         if env_id not in self._envs:
-            self._envs[env_id] = AgentEnvironment(self.env.path.parent / "envs" / env_id,
-                                                  extra_protocols=self.env.extra_protocols)
+            self._envs[env_id] = AgentEnvironment(
+                self.env.path.parent / "envs" / env_id, extra_protocols=self.env.extra_protocols
+            )
         return self._envs[env_id]
 
     def forget_env(self, env_id: str) -> None:
@@ -68,7 +72,7 @@ class Principal:
     acted_by_alias: str | None = None
 
 
-def read_root_agents(root) -> tuple[str, str | None]:
+def read_root_agents(root: Path) -> tuple[str, str | None]:
     """Text of the root AGENTS.md and the optional `modell:` from its front matter."""
     path = root / "AGENTS.md"
     try:
@@ -90,26 +94,32 @@ def read_root_agents(root) -> tuple[str, str | None]:
     return text, model
 
 
-def build_system_prompt(alias: str, agents_text: str, can_write: bool, acted_by: str | None = None,
-                        lang: str = "en") -> str:
-    write_note = prompt_text(lang, "write_note_enabled" if can_write else "write_note_disabled") or ""
+def build_system_prompt(
+    alias: str, agents_text: str, can_write: bool, acted_by: str | None = None, lang: str = "en"
+) -> str:
+    write_note = (
+        prompt_text(lang, "write_note_enabled" if can_write else "write_note_disabled") or ""
+    )
     if acted_by:
         acting = prompt_text(lang, "acting_note") or ""
         write_note += "\n" + acting.format(admin=acted_by, alias=alias)
     system = prompt_text(lang, "system") or ""
-    return system.format(alias=alias, today=dt.date.today().isoformat(), write_note=write_note) + "\n\n" + agents_text
+    today = dt.date.today().isoformat()  # noqa: DTZ011
+    return system.format(alias=alias, today=today, write_note=write_note) + "\n\n" + agents_text
 
 
-def history_messages(conv: dict) -> list[dict]:
+def history_messages(conv: dict[str, Any]) -> list[dict[str, Any]]:
     """Earlier turns as plain user/assistant text; tool exchanges are not replayed."""
-    out = []
+    out: list[dict[str, Any]] = []
     for msg in conv["messages"][-HISTORY_MESSAGES:]:
         if msg["role"] in ("user", "assistant") and msg.get("content"):
             out.append({"role": msg["role"], "content": msg["content"]})
     return out
 
 
-def nested_instruction_dirs(sandbox: Sandbox, touched: tuple[str, ...], loaded: list[str]) -> list[tuple[str, str]]:
+def nested_instruction_dirs(
+    sandbox: Sandbox, touched: tuple[str, ...], loaded: list[str]
+) -> list[tuple[str, str]]:
     found = []
     for rel in touched:
         parts = [p for p in rel.split("/") if p]
@@ -127,13 +137,19 @@ def nested_instruction_dirs(sandbox: Sandbox, touched: tuple[str, ...], loaded: 
     return found
 
 
-async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
-                   images: list[str], lang: str = "en") -> AsyncIterator[dict]:
+async def run_turn(
+    deps: Deps,
+    principal: Principal,
+    conv: dict[str, Any],
+    text: str,
+    images: list[str],
+    lang: str = "en",
+) -> AsyncIterator[dict[str, Any]]:
     """One turn; yields UI events. Always persists the conversation and commits changes."""
     options = deps.options
     settings = deps.settings.get()
     env_id = conv.get("env_id", DEFAULT_ENV_ID)
-    user_msg: dict = {"role": "user", "content": text, "ts": _now()}
+    user_msg: dict[str, Any] = {"role": "user", "content": text, "ts": _now()}
     if images:
         user_msg["images"] = images
     if principal.acted_by_alias:
@@ -144,34 +160,48 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
     conv["title"] = conv["title"] or truncate_teaser(text)
     deps.store.save(conv)
 
-    assistant: dict = {"role": "assistant", "content": "", "tools": [], "ts": _now()}
+    assistant: dict[str, Any] = {"role": "assistant", "content": "", "tools": [], "ts": _now()}
     pending_key = (principal.id, conv["id"])
     changed: list[str] = []
-    ticket = None
+    ticket: Ticket | None = None
     try:
         if settings.environments and settings.env(env_id) is None:
             raise OllamaError("The agent environment of this conversation no longer exists.")
         env = deps.env_for(env_id)
         if not env.is_cloned():
-            raise OllamaError("The agent environment is not ready yet. Ask an admin to configure it.")
+            raise OllamaError(
+                "The agent environment is not ready yet. Ask an admin to configure it."
+            )
         rules = Rules.load(env.path)
         enabled = effective_tools(rules, settings.allow_commits)
-        sandbox = Sandbox(env.path, rules, [n for n in enabled if n not in (ASK_USER, LOAD_SKILL)],
-                          max_result_bytes=options.max_tool_result_kb * 1024, write_guard=env.write_guard)
+        sandbox = Sandbox(
+            env.path,
+            rules,
+            [n for n in enabled if n not in (ASK_USER, LOAD_SKILL)],
+            max_result_bytes=options.max_tool_result_kb * 1024,
+            write_guard=env.write_guard,
+        )
         agents_text, front_model = read_root_agents(env.path)
         model = front_model or options.default_model
         if images:
             model = options.vision_model or model
-        system = build_system_prompt(principal.alias, agents_text, settings.allow_commits and bool(
-            set(enabled) & {"create_file", "write_file", "append_file", "replace_in_file"}),
-            principal.acted_by_alias, lang)
-        last_user = {"role": "user", "content": text}
+        system = build_system_prompt(
+            principal.alias,
+            agents_text,
+            settings.allow_commits
+            and bool(
+                set(enabled) & {"create_file", "write_file", "append_file", "replace_in_file"}
+            ),
+            principal.acted_by_alias,
+            lang,
+        )
+        last_user: dict[str, Any] = {"role": "user", "content": text}
         if images:
             last_user["images"] = [i.split(",", 1)[1] for i in images]
         messages = [{"role": "system", "content": system}, *history, last_user]
         schemas = tool_schemas(enabled)
 
-        async def wait_for_slot() -> AsyncIterator[dict]:
+        async def wait_for_slot() -> AsyncIterator[dict[str, Any]]:
             nonlocal ticket
             ticket = deps.queue.enqueue()
             position = None
@@ -183,7 +213,7 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                 ticket.moved.clear()
                 try:
                     await asyncio.wait_for(ticket.moved.wait(), KEEPALIVE_SECONDS)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
             yield {"type": "start"}
 
@@ -193,9 +223,11 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
         calls_made = 0
         limit_hit = False
         while not limit_hit:
-            content, tool_calls = "", []
-            async for chunk in deps.ollama.chat_stream(model=model, messages=messages, tools=schemas,
-                                                       num_ctx=options.num_ctx):
+            content = ""
+            tool_calls: list[dict[str, Any]] = []
+            async for chunk in deps.ollama.chat_stream(
+                model=model, messages=messages, tools=schemas, num_ctx=options.num_ctx
+            ):
                 message = chunk.get("message") or {}
                 if message.get("content"):
                     content += message["content"]
@@ -222,14 +254,17 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                         outcome = Outcome(f"Error: {exc}", ok=False)
                     else:
                         # Waiting for a person must not hold a generation slot.
-                        deps.queue.release(ticket)
+                        if ticket is not None:
+                            deps.queue.release(ticket)
                         ticket = None
                         pending = PendingQuestion(question)
                         deps.pending[pending_key] = pending
                         yield {"type": "question", **pending.public()}
                         try:
-                            outcome = Outcome(await asyncio.wait_for(pending.future, ANSWER_TIMEOUT_SECONDS))
-                        except asyncio.TimeoutError:
+                            outcome = Outcome(
+                                await asyncio.wait_for(pending.future, ANSWER_TIMEOUT_SECONDS)
+                            )
+                        except TimeoutError:
                             outcome = Outcome("The user did not answer in time.", ok=False)
                         finally:
                             deps.pending.pop(pending_key, None)
@@ -244,11 +279,18 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
                     outcome = await asyncio.to_thread(sandbox.execute, name, args)
                 result = outcome.text
                 if outcome.ok:
-                    for folder, extra in nested_instruction_dirs(sandbox, outcome.touched, conv["loaded_agents"]):
+                    for folder, extra in nested_instruction_dirs(
+                        sandbox, outcome.touched, conv["loaded_agents"]
+                    ):
                         result += f"\n\n[Additional instructions from {folder}]\n{extra}"
                 changed.extend(outcome.changed)
-                entry = {"name": name, "args": args if isinstance(args, dict) else {}, "result": result,
-                         "ok": outcome.ok, "changed": list(outcome.changed)}
+                entry = {
+                    "name": name,
+                    "args": args if isinstance(args, dict) else {},
+                    "result": result,
+                    "ok": outcome.ok,
+                    "changed": list(outcome.changed),
+                }
                 assistant["tools"].append(entry)
                 yield {"type": "tool", **entry}
                 messages.append({"role": "tool", "tool_name": name, "content": result})
@@ -278,15 +320,24 @@ async def run_turn(deps: Deps, principal: Principal, conv: dict, text: str,
     yield {"type": "done"}
 
 
-async def _commit(deps: Deps, env: AgentEnvironment, settings, principal: Principal, changed: list[str]) -> dict:
-    result: dict = {}
+async def _commit(
+    deps: Deps, env: AgentEnvironment, settings: Settings, principal: Principal, changed: list[str]
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
     try:
-        info = await asyncio.to_thread(env.commit, changed, principal.alias, principal.acted_by_alias)
+        info = await asyncio.to_thread(
+            env.commit, changed, principal.alias, principal.acted_by_alias
+        )
         if info is None:
             return {"commit": None, "message": "no changes", "files": sorted(set(changed))}
         result = dict(info)
     except GitError as exc:
-        return {"commit": None, "message": "commit failed", "files": sorted(set(changed)), "error": str(exc)}
+        return {
+            "commit": None,
+            "message": "commit failed",
+            "files": sorted(set(changed)),
+            "error": str(exc),
+        }
     if settings.allow_push:
         try:
             await asyncio.to_thread(env.push)
@@ -308,7 +359,8 @@ def truncate_teaser(text: str, limit: int = 40) -> str:
     return cut.rstrip(" ,.;:-") + "…"
 
 
-# The prompt lives in the add-on translation files: <add-on>/translations in the repo, /translations in the image.
+# The prompt lives in the add-on translation files: <add-on>/translations in the repo,
+# /translations in the image.
 TRANSLATIONS_DIR = Path(__file__).resolve().parents[2] / "translations"
 TITLE_MAX = 60
 
@@ -333,14 +385,15 @@ def title_prompt(lang: str, text: str) -> str | None:
 
 
 async def make_teaser(ollama: OllamaClient, model: str, text: str, lang: str, num_ctx: int) -> str:
-    """Chat title proposed by the agent; falls back to a truncated prompt if it fails or answers nothing."""
+    """Chat title proposed by the agent; falls back to a truncated prompt on failure."""
     prompt = title_prompt(lang, text[:1000])
     if prompt is None:
         return truncate_teaser(text)
     reply = ""
     try:
-        async for chunk in ollama.chat_stream(model=model, messages=[{"role": "user", "content": prompt}],
-                                              tools=[], num_ctx=num_ctx):
+        async for chunk in ollama.chat_stream(
+            model=model, messages=[{"role": "user", "content": prompt}], tools=[], num_ctx=num_ctx
+        ):
             reply += (chunk.get("message") or {}).get("content") or ""
     except OllamaError:
         return truncate_teaser(text)
@@ -352,4 +405,4 @@ async def make_teaser(ollama: OllamaClient, model: str, text: str, lang: str, nu
 
 
 def _now() -> float:
-    return dt.datetime.now(dt.timezone.utc).timestamp()
+    return dt.datetime.now(dt.UTC).timestamp()

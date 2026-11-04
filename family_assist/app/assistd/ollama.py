@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -11,8 +12,14 @@ class OllamaError(Exception):
 
 
 class OllamaClient:
-    def __init__(self, base_url: str, api_key: str = "", *, timeout: float = 600.0,
-                 transport: httpx.AsyncBaseTransport | None = None):
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str = "",
+        *,
+        timeout: float = 600.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         self._client = httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
@@ -21,9 +28,20 @@ class OllamaClient:
             transport=transport,
         )
 
-    async def chat_stream(self, *, model: str, messages: list[dict], tools: list[dict],
-                          num_ctx: int) -> AsyncIterator[dict]:
-        payload: dict = {"model": model, "messages": messages, "stream": True, "options": {"num_ctx": num_ctx}}
+    async def chat_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        num_ctx: int,
+    ) -> AsyncIterator[dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "options": {"num_ctx": num_ctx},
+        }
         if tools:
             payload["tools"] = tools
         try:
@@ -44,9 +62,15 @@ class OllamaClient:
         except httpx.HTTPError as exc:
             raise OllamaError(f"Cannot reach Ollama ({type(exc).__name__})") from None
 
-    async def check_model(self, model: str) -> dict:
+    async def check_model(self, model: str) -> dict[str, Any]:
         """Reachability and capabilities of a model; never raises."""
-        result: dict = {"model": model, "reachable": False, "exists": False, "tools": None, "vision": None}
+        result: dict[str, Any] = {
+            "model": model,
+            "reachable": False,
+            "exists": False,
+            "tools": None,
+            "vision": None,
+        }
         try:
             response = await self._client.post("/api/show", json={"model": model}, timeout=8.0)
         except httpx.HTTPError:

@@ -7,8 +7,9 @@ import shutil
 import subprocess
 import threading
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 COMMITTER_NAME = "Family Assist"
 COMMITTER_EMAIL = "family-assist@localhost"
@@ -86,21 +87,49 @@ class AgentEnvironment:
             )
         return env
 
-    def _git(self, *args: str, cwd: Path | None = None, check: bool = True, input: str | None = None,
-             env_extra: dict[str, str] | None = None) -> str:
-        protocols = ["-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
-                     "-c", "protocol.http.allow=always"]
+    def _git(
+        self,
+        *args: str,
+        cwd: Path | None = None,
+        check: bool = True,
+        input: str | None = None,
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
+        protocols = [
+            "-c",
+            "protocol.allow=never",
+            "-c",
+            "protocol.https.allow=always",
+            "-c",
+            "protocol.http.allow=always",
+        ]
         for name in self._extra_protocols:
             protocols += ["-c", f"protocol.{name}.allow=always"]
-        cmd = ["git", "-c", f"core.hooksPath={os.devnull}", "-c", "credential.helper=", *protocols, *args]
+        cmd = [
+            "git",
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "-c",
+            "credential.helper=",
+            *protocols,
+            *args,
+        ]
         token = self._current_token()
         env = self._env(token)
         if env_extra:
             env.update(env_extra)
         try:
             proc = subprocess.run(
-                cmd, cwd=cwd or self.path, env=env, input=input, capture_output=True,
-                text=True, encoding="utf-8", errors="replace", timeout=GIT_TIMEOUT_SECONDS,
+                cmd,
+                check=False,
+                cwd=cwd or self.path,
+                env=env,
+                input=input,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=GIT_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
             raise GitError(f"git {args[0]} timed out") from None
@@ -123,9 +152,9 @@ class AgentEnvironment:
         out = self._git("rev-list", "--count", f"HEAD..origin/{self._branch}", check=False)
         return int(out) if out.isdigit() else 0
 
-    def status(self) -> dict:
+    def status(self) -> dict[str, Any]:
         with self._lock:
-            info: dict = {
+            info: dict[str, Any] = {
                 "configured": self.configured,
                 "cloned": self.is_cloned(),
                 "branch": self._branch,
@@ -149,7 +178,9 @@ class AgentEnvironment:
         if self.path.exists():
             shutil.rmtree(self.path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._git("clone", "--branch", self._branch, "--", self._url, str(self.path), cwd=self.path.parent)
+        self._git(
+            "clone", "--branch", self._branch, "--", self._url, str(self.path), cwd=self.path.parent
+        )
         exclude = self.path / ".git" / "info" / "exclude"
         with contextlib.suppress(OSError):
             exclude.parent.mkdir(parents=True, exist_ok=True)
@@ -186,11 +217,15 @@ class AgentEnvironment:
             self._clone()
             self.diverged = False
             return
-        self._git("fetch", "--prune", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+        self._git(
+            "fetch", "--prune", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"
+        )
         current = self._git("rev-parse", "--abbrev-ref", "HEAD", check=False)
         if current != branch:
             if self._ahead() > 0:
-                raise GitError(f"Unpushed commits exist on '{current}'; cannot switch to '{branch}'")
+                raise GitError(
+                    f"Unpushed commits exist on '{current}'; cannot switch to '{branch}'"
+                )
             self._git("checkout", "-q", "-B", branch, f"origin/{branch}")
         if self._ahead() == 0:
             self._git("reset", "-q", "--hard", f"origin/{branch}")
@@ -204,19 +239,23 @@ class AgentEnvironment:
         except GitError:
             self._git("rebase", "--abort", check=False)
             self.diverged = True
-            raise GitError("Local commits conflict with the remote branch (diverged); nothing was discarded") from None
+            raise GitError(
+                "Local commits conflict with the remote branch (diverged); nothing was discarded"
+            ) from None
         self.diverged = False
 
     # --- writing ---------------------------------------------------------
 
     @contextlib.contextmanager
-    def write_guard(self, rel: str):
+    def write_guard(self, rel: str) -> Iterator[None]:
         """Serialises file writes with Sync and marks the path as uncommitted."""
         with self._lock:
             self._pending.add(rel)
             yield
 
-    def commit(self, paths: list[str], alias: str, acted_by: str | None = None) -> dict | None:
+    def commit(
+        self, paths: list[str], alias: str, acted_by: str | None = None
+    ) -> dict[str, Any] | None:
         paths = sorted(set(paths))
         if not paths:
             return None
@@ -234,15 +273,25 @@ class AgentEnvironment:
                 if acted_by:
                     message += f"\n\nActed-By: {_clean_identity(acted_by)}"
                 self._git(
-                    "commit", "-q", "-F", "-", input=message + "\n",
-                    env_extra={"GIT_AUTHOR_NAME": _clean_identity(alias),
-                               "GIT_AUTHOR_EMAIL": COMMITTER_EMAIL},
+                    "commit",
+                    "-q",
+                    "-F",
+                    "-",
+                    input=message + "\n",
+                    env_extra={
+                        "GIT_AUTHOR_NAME": _clean_identity(alias),
+                        "GIT_AUTHOR_EMAIL": COMMITTER_EMAIL,
+                    },
                 )
             except GitError:
                 self._rollback(paths)
                 raise
             self._pending.difference_update(paths)
-            return {"commit": self._git("rev-parse", "--short", "HEAD"), "message": subject[:120], "files": paths}
+            return {
+                "commit": self._git("rev-parse", "--short", "HEAD"),
+                "message": subject[:120],
+                "files": paths,
+            }
 
     def _rollback(self, paths: list[str]) -> None:
         self._git("reset", "-q", check=False)
@@ -261,7 +310,12 @@ class AgentEnvironment:
             if self._pending:
                 raise BusyError("Changes are being written; try again shortly")
             try:
-                self._git("fetch", "--prune", "origin", f"+refs/heads/{self._branch}:refs/remotes/origin/{self._branch}")
+                self._git(
+                    "fetch",
+                    "--prune",
+                    "origin",
+                    f"+refs/heads/{self._branch}:refs/remotes/origin/{self._branch}",
+                )
                 if self._behind() > 0 and self._ahead() > 0:
                     self._rebase()
                 ahead = self._ahead()

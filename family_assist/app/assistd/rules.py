@@ -1,8 +1,10 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
+from typing import Any
 
 import pathspec
 import yaml
@@ -15,7 +17,7 @@ CONFIG_FILE = ".family_assist.yaml"
 _MAX_RULE_FILE_BYTES = 64 * 1024
 
 
-def _spec(lines) -> pathspec.GitIgnoreSpec:
+def _spec(lines: Iterable[str]) -> pathspec.GitIgnoreSpec:
     return pathspec.GitIgnoreSpec.from_lines(list(lines))
 
 
@@ -27,7 +29,7 @@ def _match(spec: pathspec.GitIgnoreSpec, rel: str, is_dir: bool) -> bool:
     return spec.match_file(rel + "/" if is_dir else rel)
 
 
-def _read_config(root: Path) -> tuple[dict, list[str]]:
+def _read_config(root: Path) -> tuple[dict[str, Any], list[str]]:
     path = root / CONFIG_FILE
     try:
         if path.is_symlink() or not path.is_file():
@@ -47,7 +49,7 @@ def _read_config(root: Path) -> tuple[dict, list[str]]:
     return doc, []
 
 
-def _string_list(doc: dict, key: str, warnings: list[str]) -> list[str] | None:
+def _string_list(doc: dict[str, Any], key: str, warnings: list[str]) -> list[str] | None:
     if key not in doc or doc[key] is None:
         return None
     value = doc[key]
@@ -55,6 +57,7 @@ def _string_list(doc: dict, key: str, warnings: list[str]) -> list[str] | None:
         warnings.append(f"{key} in {CONFIG_FILE} must be a list of strings and is ignored")
         return None
     return [v.strip() for v in value if v.strip()]
+
 
 @dataclass(frozen=True)
 class Rules:
@@ -64,13 +67,15 @@ class Rules:
     warnings: tuple[str, ...] = ()
 
     @staticmethod
-    def load(root: Path) -> "Rules":
+    def load(root: Path) -> Rules:
         doc, warnings = _read_config(root)
         hidden = _string_list(doc, "hidden", warnings) or []
         readonly = _string_list(doc, "readonly", warnings) or []
         tool_lines = _string_list(doc, "tools", warnings)
         if hidden and _match(_spec(hidden), "AGENTS.md", False):
-            warnings.append(f"A rule in {CONFIG_FILE} (hidden) matches the root AGENTS.md and is ignored for it")
+            warnings.append(
+                f"A rule in {CONFIG_FILE} (hidden) matches the root AGENTS.md and is ignored for it"
+            )
         tools = None if tool_lines is None else frozenset(tool_lines)
         return Rules(tuple(hidden), tuple(readonly), tools, tuple(warnings))
 

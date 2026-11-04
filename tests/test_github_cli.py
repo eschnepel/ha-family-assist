@@ -1,24 +1,24 @@
 import asyncio
 import sys
 import time
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
-
-from assistd.ghcli import GitHubCli
+from assistd.ghcli import GhError, GitHubCli
 from assistd.identity import StaticUsers
 from assistd.web import create_app
-from test_agent_web import DEAD_URL, FakeOllama, USERS, as_user, make_deps, plain_env
+from test_agent_web import DEAD_URL, USERS, AppClient, FakeOllama, as_user, make_deps, plain_env
 
 FAKE = (sys.executable, str(Path(__file__).with_name("fake_gh.py")))
 
 
-def make_gh(tmp_path, **kw) -> GitHubCli:
+def make_gh(tmp_path: Path, **kw: Any) -> GitHubCli:
     return GitHubCli(tmp_path / "gh", command=FAKE, **kw)
 
 
-async def wait_for(predicate, seconds=10.0):
+async def wait_for(predicate: Callable[[], bool], seconds: float = 10.0) -> None:
     for _ in range(int(seconds / 0.05)):
         if predicate():
             return
@@ -26,10 +26,10 @@ async def wait_for(predicate, seconds=10.0):
     raise AssertionError("timed out")
 
 
-def test_login_flow_shows_code_then_signs_in(tmp_path):
-    async def go():
+def test_login_flow_shows_code_then_signs_in(tmp_path: Path) -> None:
+    async def go() -> None:
         gh = make_gh(tmp_path)
-        done = []
+        done: list[bool] = []
         gh.on_success = lambda: done.append(True)
         assert (await gh.status())["logged_in"] is False and gh.token() == ""
         started = await gh.start_login()
@@ -40,14 +40,17 @@ def test_login_flow_shows_code_then_signs_in(tmp_path):
         await wait_for(lambda: gh.login.state == "done")
         assert done == [True]
         status = await gh.status()
-        assert status["logged_in"] and status["account"] == "octocat" and gh.token() == "gho_faketoken"
+        assert (
+            status["logged_in"] and status["account"] == "octocat" and gh.token() == "gho_faketoken"
+        )
         await gh.logout()
         assert (await gh.status())["logged_in"] is False and gh.token() == ""
+
     asyncio.run(go())
 
 
-def test_denied_and_timed_out_logins_fail_cleanly(tmp_path):
-    async def go():
+def test_denied_and_timed_out_logins_fail_cleanly(tmp_path: Path) -> None:
+    async def go() -> None:
         gh = make_gh(tmp_path)
         await gh.start_login()
         (tmp_path / "gh" / "deny").write_text("")
@@ -57,83 +60,103 @@ def test_denied_and_timed_out_logins_fail_cleanly(tmp_path):
         await slow.start_login()
         await wait_for(lambda: slow.login.state == "failed")
         assert "timed out" in slow.login.error
+
     asyncio.run(go())
 
 
-def test_flags_missing_in_an_older_gh_are_not_passed(tmp_path):
-    async def go():
+def test_flags_missing_in_an_older_gh_are_not_passed(tmp_path: Path) -> None:
+    async def go() -> None:
         env = {"FAKE_GH_UNSUPPORTED": "--insecure-storage,--skip-ssh-key"}
         gh = make_gh(tmp_path, extra_env=env)
         started = await gh.start_login()
         assert started["state"] == "pending" and started["code"] == "ABCD-1234"
         await gh.cancel()
+
     asyncio.run(go())
 
 
-def test_gh_flag_error_is_shown_without_the_usage_text(tmp_path):
-    async def go():
+def test_gh_flag_error_is_shown_without_the_usage_text(tmp_path: Path) -> None:
+    async def go() -> None:
         gh = make_gh(tmp_path, extra_env={"FAKE_GH_UNSUPPORTED": "--web"})
         await gh.start_login()
         await wait_for(lambda: gh.login.state == "failed")
         assert gh.login.error == "unknown flag: --web"
         assert "with-token" not in gh.login.error
+
     asyncio.run(go())
 
 
-def test_error_summary_keeps_the_message_and_drops_usage():
+def test_error_summary_keeps_the_message_and_drops_usage() -> None:
     from assistd.ghcli import error_summary
-    usage = "unknown flag: --x\n\nUsage:\n  gh auth login [flags]\n\nFlags:\n  --with-token  Read token\n"
+
+    usage = (
+        "unknown flag: --x\n\nUsage:\n  gh auth login [flags]\n\nFlags:\n"
+        "  --with-token  Read token\n"
+    )
     assert error_summary(usage) == "unknown flag: --x"
     assert error_summary("a\nb\nauthorization denied\n") == "b | authorization denied"
     assert error_summary("") == "Sign-in failed"
     assert error_summary("Usage: gh\n  --with-token  Read token") == "Usage: gh"
 
 
-def test_new_login_replaces_a_pending_one(tmp_path):
-    async def go():
+def test_new_login_replaces_a_pending_one(tmp_path: Path) -> None:
+    async def go() -> None:
         gh = make_gh(tmp_path)
         await gh.start_login()
         first = gh._proc
         await gh.start_login()
         await asyncio.sleep(0.3)
+        assert first is not None
         assert first.returncode is not None and gh.login.state == "pending"
         await gh.cancel()
         assert gh.login.state == "idle"
+
     asyncio.run(go())
 
 
-def test_missing_cli_is_reported(tmp_path):
+def test_missing_cli_is_reported(tmp_path: Path) -> None:
     gh = GitHubCli(tmp_path / "gh", command=("definitely-not-gh",))
     assert not gh.available and gh.token() == ""
-    with pytest.raises(Exception):
+    with pytest.raises(GhError):
         asyncio.run(gh.start_login())
 
 
 @pytest.fixture
-def web(tmp_path, checkout):
+def web(tmp_path: Path, checkout: Path) -> Iterator[AppClient]:
     deps = make_deps(tmp_path, plain_env(checkout), FakeOllama([]))
     deps.gh = make_gh(tmp_path)
     app = create_app(deps, StaticUsers(USERS), dev=True, background=False)
-    with TestClient(app) as client:
+    with AppClient(app) as client:
         client.deps = deps
         yield client
 
 
-def test_github_endpoints_are_admin_only(web):
-    for method, path in [("get", "/api/admin/github"), ("post", "/api/admin/github/login"),
-                         ("post", "/api/admin/github/logout")]:
+def test_github_endpoints_are_admin_only(web: AppClient) -> None:
+    for method, path in [
+        ("get", "/api/admin/github"),
+        ("post", "/api/admin/github/login"),
+        ("post", "/api/admin/github/logout"),
+    ]:
         assert getattr(web, method)(path, headers=as_user("kid1")).status_code == 403
 
 
-def test_login_through_the_api_and_token_reaches_git(web, tmp_path):
+def test_login_through_the_api_and_token_reaches_git(web: AppClient, tmp_path: Path) -> None:
     admin = as_user("admin1")
     login = web.post("/api/admin/github/login", headers=admin).json()
     assert login["login"]["code"] == "ABCD-1234" and login["logged_in"] is False
-    body = {"environments": [{"id": "default", "name": "Default", "repo_url": DEAD_URL, "branch": "main"}],
-            "allow_commits": False, "allow_push": False,
-            "auth_method": "github_cli"}
+    body: dict[str, Any] = {
+        "environments": [
+            {"id": "default", "name": "Default", "repo_url": DEAD_URL, "branch": "main"}
+        ],
+        "allow_commits": False,
+        "allow_push": False,
+        "auth_method": "github_cli",
+    }
     web.deps.env.sync = lambda: None  # the dummy checkout must not be re-cloned
-    assert web.put("/api/admin/settings", headers=admin, json=body).json()["auth_method"] == "github_cli"
+    assert (
+        web.put("/api/admin/settings", headers=admin, json=body).json()["auth_method"]
+        == "github_cli"
+    )
     assert web.deps.env._current_token() == ""
     (tmp_path / "gh" / "approve").write_text("")
     for _ in range(200):
@@ -152,8 +175,9 @@ def test_login_through_the_api_and_token_reaches_git(web, tmp_path):
     assert web.get("/api/admin/github", headers=admin).json()["logged_in"] is False
 
 
-def test_cli_token_is_sent_to_git_but_not_stored(tmp_path):
+def test_cli_token_is_sent_to_git_but_not_stored(tmp_path: Path) -> None:
     from assistd.gitenv import AgentEnvironment
+
     env = AgentEnvironment(tmp_path / "env" / "repo")
     env.configure("http://127.0.0.1:9/none.git", "main", lambda: "gho_faketoken")
     with pytest.raises(Exception) as exc:

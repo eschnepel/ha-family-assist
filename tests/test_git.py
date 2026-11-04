@@ -1,23 +1,27 @@
 import subprocess
+from pathlib import Path
 
 import pytest
-
 from assistd.gitenv import AgentEnvironment, BusyError, GitError
-from conftest import GIT_ID, git, write
+from conftest import git, write
 
 
-def make_env(tmp_path, remote) -> AgentEnvironment:
+def make_env(tmp_path: Path, remote: Path) -> AgentEnvironment:
     env = AgentEnvironment(tmp_path / "env" / "repo", extra_protocols=("file",))
     env.configure(str(remote), "main", "")
     return env
 
 
-def remote_log(remote) -> list[str]:
-    return subprocess.run(["git", "--git-dir", str(remote), "log", "--format=%an|%ae|%cn|%B"], check=True,
-                          capture_output=True, text=True).stdout.split("\n")
+def remote_log(remote: Path) -> list[str]:
+    return subprocess.run(
+        ["git", "--git-dir", str(remote), "log", "--format=%an|%ae|%cn|%B"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split("\n")
 
 
-def test_clone_and_sync_updates(tmp_path, remote):
+def test_clone_and_sync_updates(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     assert env.is_cloned() and (env.path / "AGENTS.md").exists()
@@ -32,7 +36,7 @@ def test_clone_and_sync_updates(tmp_path, remote):
     assert status["ahead"] == 0 and status["behind"] == 0 and status["last_error"] is None
 
 
-def test_commit_and_push_with_attribution(tmp_path, remote):
+def test_commit_and_push_with_attribution(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("Mathe/a.md"):
@@ -46,7 +50,7 @@ def test_commit_and_push_with_attribution(tmp_path, remote):
     assert "Acted-By: Papa" in log
 
 
-def test_commit_without_net_change_returns_none(tmp_path, remote):
+def test_commit_without_net_change_returns_none(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("notes.md"):
@@ -55,7 +59,7 @@ def test_commit_without_net_change_returns_none(tmp_path, remote):
     assert env.status()["pending"] == 0
 
 
-def test_pending_changes_block_sync(tmp_path, remote):
+def test_pending_changes_block_sync(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("x.md"):
@@ -66,7 +70,7 @@ def test_pending_changes_block_sync(tmp_path, remote):
     env.sync()
 
 
-def test_diverged_rebase_keeps_local_commits(tmp_path, remote):
+def test_diverged_rebase_keeps_local_commits(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("notes.md"):
@@ -85,7 +89,7 @@ def test_diverged_rebase_keeps_local_commits(tmp_path, remote):
     assert not (env.path / ".git" / "rebase-merge").exists()
 
 
-def test_rebase_succeeds_for_disjoint_changes(tmp_path, remote):
+def test_rebase_succeeds_for_disjoint_changes(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("mine.md"):
@@ -101,7 +105,7 @@ def test_rebase_succeeds_for_disjoint_changes(tmp_path, remote):
     assert (env.path / "theirs.md").exists()
 
 
-def test_failed_commit_rolls_back(tmp_path, remote):
+def test_failed_commit_rolls_back(tmp_path: Path, remote: Path) -> None:
     env = make_env(tmp_path, remote)
     env.sync()
     with env.write_guard("ignored.log"):
@@ -112,7 +116,7 @@ def test_failed_commit_rolls_back(tmp_path, remote):
     assert not (env.path / "ignored.log").exists() and env.status()["pending"] == 0
 
 
-def test_token_not_in_remote_config_or_errors(tmp_path):
+def test_token_not_in_remote_config_or_errors(tmp_path: Path) -> None:
     env = AgentEnvironment(tmp_path / "env" / "repo")
     env.configure("http://127.0.0.1:9/none.git", "main", "SECRET-TOKEN")
     with pytest.raises(GitError) as exc:
@@ -121,10 +125,17 @@ def test_token_not_in_remote_config_or_errors(tmp_path):
     assert not (tmp_path / "env" / "repo").exists()
 
 
-def test_url_validation():
+def test_url_validation() -> None:
     from assistd.config import ValidationError, validate_branch, validate_repo_url
+
     assert validate_repo_url("https://github.com/o/r.git")
-    for bad in ["file:///etc", "ssh://git@x/r", "https://u:p@github.com/r", "ext::sh -c id", "https://a b"]:
+    for bad in [
+        "file:///etc",
+        "ssh://git@x/r",
+        "https://u:p@github.com/r",
+        "ext::sh -c id",
+        "https://a b",
+    ]:
         with pytest.raises(ValidationError):
             validate_repo_url(bad)
     for bad in ["-evil", "a..b", "a b", ""]:

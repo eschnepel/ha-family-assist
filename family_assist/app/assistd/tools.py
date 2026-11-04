@@ -6,16 +6,19 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, ContextManager
+from typing import Any
 
 import pathspec
 import regex
 
-from .questions import ASK_USER, SCHEMA as ASK_USER_SCHEMA
+from .questions import ASK_USER
+from .questions import SCHEMA as ASK_USER_SCHEMA
 from .rules import Rules
-from .skills import LOAD_SKILL, SCHEMA as LOAD_SKILL_SCHEMA
+from .skills import LOAD_SKILL
+from .skills import SCHEMA as LOAD_SKILL_SCHEMA
 
 READ_TOOLS = ("list_dir", "find", "grep", "read_file")
 INTERACTIVE_TOOLS = (ASK_USER, LOAD_SKILL)  # handled by the agent loop, not by the Sandbox
@@ -57,23 +60,36 @@ def unknown_tool_names(rules: Rules) -> list[str]:
     return sorted(rules.tools - set(READ_TOOLS) - set(INTERACTIVE_TOOLS) - set(WRITE_TOOLS))
 
 
-def _obj(properties: dict, required: list[str]) -> dict:
+def _obj(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required}
 
 
 _STR = {"type": "string"}
-SCHEMAS: dict[str, tuple[str, dict]] = {
+SCHEMAS: dict[str, tuple[str, dict[str, Any]]] = {
     ASK_USER: ASK_USER_SCHEMA,
     LOAD_SKILL: LOAD_SKILL_SCHEMA,
     "list_dir": (
         "List the files and folders in a folder of the environment. Folders end with '/'.",
-        _obj({"path": {**_STR, "description": "Folder relative to the environment root; empty for the root"}}, []),
+        _obj(
+            {
+                "path": {
+                    **_STR,
+                    "description": "Folder relative to the environment root; empty for the root",
+                }
+            },
+            [],
+        ),
     ),
     "find": (
-        "Find files by glob pattern (gitignore syntax, e.g. '*.md' or 'Mathe/**/Klasse-8*'). "
-        "A pattern ending in '/' finds folders instead of files.",
+        (
+            "Find files by glob pattern (gitignore syntax, e.g. '*.md' or 'Mathe/**/Klasse-8*'). "
+            "A pattern ending in '/' finds folders instead of files."
+        ),
         _obj(
-            {"pattern": _STR, "path": {**_STR, "description": "Folder to search in; empty for the root"}},
+            {
+                "pattern": _STR,
+                "path": {**_STR, "description": "Folder to search in; empty for the root"},
+            },
             ["pattern"],
         ),
     ),
@@ -113,8 +129,11 @@ SCHEMAS: dict[str, tuple[str, dict]] = {
         _obj({"path": _STR, "content": _STR}, ["path", "content"]),
     ),
     "replace_in_file": (
-        "Replace exact text in a file. Give either old_string and new_string, or a list of edits. "
-        "Every old_string must occur exactly once; if any edit fails, nothing is changed.",
+        (
+            "Replace exact text in a file. Give either old_string and new_string, or a list of "
+            "edits. Every old_string must occur exactly once; if any edit fails, nothing is "
+            "changed."
+        ),
         _obj(
             {
                 "path": _STR,
@@ -122,7 +141,9 @@ SCHEMAS: dict[str, tuple[str, dict]] = {
                 "new_string": _STR,
                 "edits": {
                     "type": "array",
-                    "items": _obj({"old_string": _STR, "new_string": _STR}, ["old_string", "new_string"]),
+                    "items": _obj(
+                        {"old_string": _STR, "new_string": _STR}, ["old_string", "new_string"]
+                    ),
                 },
             },
             ["path"],
@@ -131,14 +152,17 @@ SCHEMAS: dict[str, tuple[str, dict]] = {
 }
 
 
-def tool_schemas(enabled: list[str]) -> list[dict]:
+def tool_schemas(enabled: list[str]) -> list[dict[str, Any]]:
     return [
-        {"type": "function", "function": {"name": n, "description": SCHEMAS[n][0], "parameters": SCHEMAS[n][1]}}
+        {
+            "type": "function",
+            "function": {"name": n, "description": SCHEMAS[n][0], "parameters": SCHEMAS[n][1]},
+        }
         for n in enabled
     ]
 
 
-def _int(value, name: str, default: int | None) -> int | None:
+def _int(value: Any, name: str, default: int | None) -> int | None:
     if value is None or value == "":
         return default
     try:
@@ -147,7 +171,7 @@ def _int(value, name: str, default: int | None) -> int | None:
         raise ToolError(f"{name} must be an integer") from None
 
 
-def _bool(value, default: bool) -> bool:
+def _bool(value: Any, default: bool) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -165,7 +189,7 @@ class Sandbox:
         enabled: list[str],
         *,
         max_result_bytes: int = 32 * 1024,
-        write_guard: Callable[[str], ContextManager] | None = None,
+        write_guard: Callable[[str], contextlib.AbstractContextManager[Any]] | None = None,
     ):
         self.root = Path(os.path.realpath(root))
         self.rules = rules
@@ -178,7 +202,7 @@ class Sandbox:
     def _not_found(self, path: str) -> ToolError:
         return ToolError(f"not found: {path}")
 
-    def _lexical(self, path) -> str:
+    def _lexical(self, path: Any) -> str:
         if not isinstance(path, str):
             raise ToolError("path must be a string")
         if "\0" in path:
@@ -188,7 +212,7 @@ class Sandbox:
             raise self._not_found(path)
         return "/".join(parts)
 
-    def _resolve(self, path) -> tuple[Path, str]:
+    def _resolve(self, path: Any) -> tuple[Path, str]:
         rel = self._lexical(path)
         target = Path(os.path.realpath(self.root / rel))
         try:
@@ -203,7 +227,7 @@ class Sandbox:
                 raise self._not_found(path)
         return target, real_rel
 
-    def _resolve_writable(self, path) -> tuple[Path, str]:
+    def _resolve_writable(self, path: Any) -> tuple[Path, str]:
         target, rel = self._resolve(path)
         lexical = self._lexical(path)
         if not rel:
@@ -246,14 +270,15 @@ class Sandbox:
             text += f"\n[{extra} more entries omitted]"
         return Outcome(text, touched=(rel,))
 
-    def _walk_files(self, start: Path, start_rel: str):
+    def _walk_files(self, start: Path, start_rel: str) -> Iterator[tuple[Path, str]]:
         """Yield (file_path, rel_to_root) for visible regular files below start."""
         scanned = 0
         for dirpath, dirnames, filenames in os.walk(start, followlinks=False):
             here = Path(dirpath).relative_to(self.root).as_posix()
             here = "" if here == "." else here
             dirnames[:] = sorted(
-                d for d in dirnames
+                d
+                for d in dirnames
                 if not self._is_link(Path(dirpath) / d)
                 and not self.rules.is_hidden(f"{here}/{d}" if here else d, True)
             )
@@ -268,7 +293,11 @@ class Sandbox:
                 yield full, rel
 
     def tool_find(self, pattern: str, path: str = "") -> Outcome:
-        if not isinstance(pattern, str) or not pattern.strip() or pattern.lstrip().startswith(("!", "#")):
+        if (
+            not isinstance(pattern, str)
+            or not pattern.strip()
+            or pattern.lstrip().startswith(("!", "#"))
+        ):
             raise ToolError("invalid pattern")
         target, rel = self._resolve(path)
         if not target.is_dir():
@@ -287,14 +316,14 @@ class Sandbox:
                     if self._is_link(Path(dirpath) / d) or self.rules.is_hidden(child, True):
                         continue
                     keep.append(d)
-                    if spec.match_file(child[len(prefix):] + "/"):
+                    if spec.match_file(child[len(prefix) :] + "/"):
                         found.append(child + "/")
                 dirnames[:] = keep
                 if len(found) > MAX_FIND_RESULTS:
                     break
         else:
             for _, frel in self._walk_files(target, rel):
-                if spec.match_file(frel[len(prefix):]):
+                if spec.match_file(frel[len(prefix) :]):
                     found.append(frel)
                     if len(found) > MAX_FIND_RESULTS:
                         break
@@ -316,7 +345,9 @@ class Sandbox:
             raise ToolError("binary file")
         return data
 
-    def tool_grep(self, pattern: str, path: str = "", glob: str = "", ignore_case=True) -> Outcome:
+    def tool_grep(
+        self, pattern: str, path: str = "", glob: str = "", ignore_case: Any = True
+    ) -> Outcome:
         if not isinstance(pattern, str) or not pattern or len(pattern) > 300:
             raise ToolError("invalid pattern")
         try:
@@ -326,7 +357,11 @@ class Sandbox:
         target, rel = self._resolve(path)
         if not target.exists():
             raise self._not_found(path)
-        glob_spec = pathspec.GitIgnoreSpec.from_lines([glob.strip()]) if isinstance(glob, str) and glob.strip() else None
+        glob_spec = (
+            pathspec.GitIgnoreSpec.from_lines([glob.strip()])
+            if isinstance(glob, str) and glob.strip()
+            else None
+        )
         files = [(target, rel)] if target.is_file() else self._walk_files(target, rel)
         deadline = time.monotonic() + GREP_DEADLINE_SECONDS
         results: list[str] = []
@@ -357,7 +392,7 @@ class Sandbox:
                 break
         return Outcome(("\n".join(results) or "(no matches)") + note, touched=(rel,))
 
-    def tool_read_file(self, path: str, start_line=None, end_line=None) -> Outcome:
+    def tool_read_file(self, path: str, start_line: Any = None, end_line: Any = None) -> Outcome:
         target, rel = self._resolve(path)
         if not target.is_file():
             raise self._not_found(path)
@@ -366,7 +401,7 @@ class Sandbox:
         total = len(lines)
         first = max(1, _int(start_line, "start_line", 1) or 1)
         last = min(total, _int(end_line, "end_line", total) or total)
-        body = "\n".join(lines[first - 1:last])
+        body = "\n".join(lines[first - 1 : last])
         raw = body.encode("utf-8")
         if len(raw) > self.max_result_bytes:
             body = raw[: self.max_result_bytes].decode("utf-8", errors="ignore")
@@ -379,7 +414,7 @@ class Sandbox:
     # --- write tools ---------------------------------------------------
 
     @staticmethod
-    def _encode(content) -> bytes:
+    def _encode(content: Any) -> bytes:
         if not isinstance(content, str):
             raise ToolError("content must be a string")
         data = content.encode("utf-8")
@@ -427,7 +462,9 @@ class Sandbox:
             self._replace_atomic(target, old + data)
         return Outcome(f"Appended {len(data)} bytes to {rel}", touched=(rel,), changed=(rel,))
 
-    def tool_replace_in_file(self, path: str, old_string=None, new_string=None, edits=None) -> Outcome:
+    def tool_replace_in_file(
+        self, path: str, old_string: Any = None, new_string: Any = None, edits: Any = None
+    ) -> Outcome:
         if edits is None:
             if old_string is None or new_string is None:
                 raise ToolError("give old_string and new_string, or edits")
@@ -445,10 +482,15 @@ class Sandbox:
                 old = edit.get("old_string", edit.get("old"))
                 new = edit.get("new_string", edit.get("new"))
                 if not isinstance(old, str) or not old or not isinstance(new, str):
-                    raise ToolError(f"edit {index}: old_string must be non-empty text and new_string text")
+                    raise ToolError(
+                        f"edit {index}: old_string must be non-empty text and new_string text"
+                    )
                 count = text.count(old)
                 if count != 1:
-                    raise ToolError(f"edit {index}: old_string found {count} times (must be exactly 1); nothing was changed")
+                    raise ToolError(
+                        f"edit {index}: old_string found {count} times (must be exactly 1); "
+                        "nothing was changed"
+                    )
                 text = text.replace(old, new, 1)
             data = self._encode(text)
             self._replace_atomic(target, data)
@@ -476,7 +518,7 @@ class Sandbox:
 
     # --- dispatch --------------------------------------------------------
 
-    def execute(self, name: str, arguments) -> Outcome:
+    def execute(self, name: str, arguments: Any) -> Outcome:
         if name not in self.enabled:
             return Outcome(f"Error: unknown tool '{name}'", ok=False)
         if isinstance(arguments, str):
@@ -488,7 +530,7 @@ class Sandbox:
             return Outcome("Error: arguments must be an object", ok=False)
         func = getattr(self, f"tool_{name}")
         try:
-            outcome = func(**arguments)
+            outcome: Outcome = func(**arguments)
         except ToolError as exc:
             return Outcome(f"Error: {exc}", ok=False)
         except TypeError:

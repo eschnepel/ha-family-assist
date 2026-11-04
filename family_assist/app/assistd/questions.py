@@ -4,6 +4,7 @@ import asyncio
 import json
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 ASK_USER = "ask_user"
 KINDS = ("single", "multiple", "text")
@@ -15,22 +16,35 @@ MAX_ANSWER_CHARS = 4000
 SKIPPED = "The user skipped this question."
 
 SCHEMA = (
-    "Ask the user ONE question and wait for the answer. Use it when you need information only the user can give. "
-    "Ask several questions by calling this tool several times, one after the other.",
+    (
+        "Ask the user ONE question and wait for the answer. "
+        "Use it when you need information only the user can give. "
+        "Ask several questions by calling this tool several times, one after the other."
+    ),
     {
         "type": "object",
         "properties": {
             "question": {"type": "string", "description": "The question text"},
             "kind": {
-                "type": "string", "enum": list(KINDS),
-                "description": "'single' = pick one option, 'multiple' = pick any number of options, "
-                               "'text' = free text answer. Default 'text'",
+                "type": "string",
+                "enum": list(KINDS),
+                "description": (
+                    "'single' = pick one option, 'multiple' = pick any number of options, "
+                    "'text' = free text answer. Default 'text'"
+                ),
             },
             "options": {
-                "type": "array", "items": {"type": "string"},
-                "description": f"The choices; required for 'single' and 'multiple' ({MIN_OPTIONS}-{MAX_OPTIONS} entries)",
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    f"The choices; required for 'single' and 'multiple' "
+                    f"({MIN_OPTIONS}-{MAX_OPTIONS} entries)"
+                ),
             },
-            "required": {"type": "boolean", "description": "Default true; false lets the user skip the question"},
+            "required": {
+                "type": "boolean",
+                "description": "Default true; false lets the user skip the question",
+            },
         },
         "required": ["question"],
     },
@@ -49,7 +63,7 @@ class Question:
     required: bool
 
 
-def parse_question(arguments) -> Question:
+def parse_question(arguments: Any) -> Question:
     """Validate the arguments of an `ask_user` call as sent by the model."""
     if isinstance(arguments, str):
         try:
@@ -85,17 +99,25 @@ def parse_question(arguments) -> Question:
 
 @dataclass
 class PendingQuestion:
-    """A question shown to the user; the agent turn waits on `future` for the answer as tool result text."""
+    """A question shown to the user; the agent turn waits on `future` for the answer."""
 
     question: Question
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
-    future: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future(), repr=False)
+    future: asyncio.Future[str] = field(
+        default_factory=lambda: asyncio.get_running_loop().create_future(), repr=False
+    )
 
-    def public(self) -> dict:
+    def public(self) -> dict[str, Any]:
         q = self.question
-        return {"id": self.id, "question": q.text, "kind": q.kind, "options": list(q.options), "required": q.required}
+        return {
+            "id": self.id,
+            "question": q.text,
+            "kind": q.kind,
+            "options": list(q.options),
+            "required": q.required,
+        }
 
-    def answer(self, value, skipped: bool = False) -> None:
+    def answer(self, value: Any, skipped: bool = False) -> None:
         """Check the user's answer against the question and hand it to the waiting turn."""
         if self.future.done():
             raise QuestionError("this question was already answered")
@@ -119,7 +141,9 @@ class PendingQuestion:
                 raise QuestionError("the answer must be one of the options")
             result = value
         else:
-            if not isinstance(value, list) or not all(isinstance(v, str) and v in q.options for v in value):
+            if not isinstance(value, list) or not all(
+                isinstance(v, str) and v in q.options for v in value
+            ):
                 raise QuestionError("the answer must be a list of the options")
             result = "\n".join(o for o in q.options if o in value)
         self.future.set_result(result)

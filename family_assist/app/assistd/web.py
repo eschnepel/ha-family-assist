@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# ruff: noqa: B008  (FastAPI dependencies are declared as parameter defaults)
 import asyncio
 import base64
 import binascii
@@ -11,9 +12,10 @@ import logging
 import re
 import shutil
 import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -22,10 +24,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from .agent import Deps, Principal, read_root_agents, run_turn
-from .config import (DEFAULT_ENV_ID, EnvConfig, Settings, ValidationError, clean_alias, name_from_url,
-                     validate_branch, validate_repo_url)
+from .config import (
+    DEFAULT_ENV_ID,
+    EnvConfig,
+    Settings,
+    ValidationError,
+    clean_alias,
+    name_from_url,
+    validate_branch,
+    validate_repo_url,
+)
 from .ghcli import GhError
-from .gitenv import BusyError, GitError
+from .gitenv import AgentEnvironment, BusyError, GitError
 from .identity import HAUser, UserDirectory, UserDirectoryError
 from .questions import QuestionError
 from .rules import Rules
@@ -39,8 +49,11 @@ MAX_IMAGES = 4
 MAX_IMAGE_CHARS = 8_000_000
 _IMAGE_RE = re.compile(r"^data:image/(?:jpeg|png|webp);base64,[A-Za-z0-9+/=]+$")
 
-CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; "
-       "connect-src 'self'; base-uri 'none'; form-action 'none'")
+CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
+    "font-src 'self'; "
+    "connect-src 'self'; base-uri 'none'; form-action 'none'"
+)
 
 
 class RenameIn(BaseModel):
@@ -117,22 +130,30 @@ class State:
     users: UserDirectory
     dev: bool
     running: set[tuple[str, str]] = field(default_factory=set)
-    tasks: set[asyncio.Task] = field(default_factory=set)
+    tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
 
-def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, background: bool = True,
-               dev_user: str = "") -> FastAPI:
+def create_app(
+    deps: Deps,
+    users: UserDirectory,
+    *,
+    dev: bool = False,
+    background: bool = True,
+    dev_user: str = "",
+) -> FastAPI:
     state = State(deps, users, dev)
-    env, settings_store, gh = deps.env, deps.settings, deps.gh
+    settings_store, gh = deps.settings, deps.gh
 
     def apply_settings() -> Settings:
         settings = settings_store.get()
-        token = gh.token if gh and settings.auth_method == "github_cli" else settings_store.git_token()
+        token = (
+            gh.token if gh and settings.auth_method == "github_cli" else settings_store.git_token()
+        )
         for cfg in settings.environments:
             deps.env_for(cfg.id).configure(cfg.repo_url, cfg.branch, token)
         return settings
 
-    def env_of(env_id: str):
+    def env_of(env_id: str) -> AgentEnvironment:
         """The checkout of a configured environment, else 404."""
         if settings_store.get().env(env_id) is None:
             raise HTTPException(404, "unknown environment")
@@ -149,9 +170,12 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             raise HTTPException(404, "no environment configured")
         return settings.environments[0].id
 
-    async def sync_now(target=None) -> None:
-        targets = [target] if target is not None else [
-            deps.env_for(cfg.id) for cfg in settings_store.get().environments]
+    async def sync_now(target: AgentEnvironment | None = None) -> None:
+        targets = (
+            [target]
+            if target is not None
+            else [deps.env_for(cfg.id) for cfg in settings_store.get().environments]
+        )
         for item in targets:
             if not item.configured:
                 continue
@@ -160,7 +184,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             except GitError as exc:
                 log.warning("Sync of %s failed: %s", item.path.name, exc)
 
-    def spawn(coro) -> None:
+    def spawn(coro: Coroutine[Any, Any, None]) -> None:
         task = asyncio.create_task(coro)
         state.tasks.add(task)
         task.add_done_callback(state.tasks.discard)
@@ -173,7 +197,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             await sync_now()
 
     @contextlib.asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         apply_settings()
         if gh:
             gh.on_success = lambda: spawn(sync_now())
@@ -189,18 +213,26 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
-    async def secure(request: Request, call_next):
+    async def secure(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         client = request.client.host if request.client else ""
         if not dev and client not in INGRESS_ADDRESSES:
             return JSONResponse({"detail": "forbidden"}, status_code=403)
-        if request.method not in ("GET", "HEAD") and request.headers.get("x-requested-with") != "family-assist":
+        if (
+            request.method not in ("GET", "HEAD")
+            and request.headers.get("x-requested-with") != "family-assist"
+        ):
             return JSONResponse({"detail": "forbidden"}, status_code=403)
         response = await call_next(request)
         response.headers["Content-Security-Policy"] = CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cache-Control"] = (
-            "public, max-age=86400" if request.url.path.startswith("/static/vendor/") else "no-store")
+            "public, max-age=86400"
+            if request.url.path.startswith("/static/vendor/")
+            else "no-store"
+        )
         return response
 
     def alias_of(user: HAUser) -> str:
@@ -223,9 +255,10 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         if act_as and act_as != real.id:
             if not real.is_admin:
                 raise HTTPException(403, "admin only")
-            eff = by_id.get(act_as)
-            if eff is None:
+            other = by_id.get(act_as)
+            if other is None:
                 raise HTTPException(404, "unknown user")
+            eff = other
         return Ctx(real, eff, alias_of(real), alias_of(eff))
 
     async def admin(c: Ctx = Depends(ctx)) -> Ctx:
@@ -236,42 +269,49 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
     # --- chat ------------------------------------------------------------
 
     @app.get("/api/me")
-    async def me(c: Ctx = Depends(ctx)):
+    async def me(c: Ctx = Depends(ctx)) -> Any:
         settings = settings_store.get()
         return {
-            "id": c.eff.id, "alias": c.eff_alias, "is_admin": c.real.is_admin,
-            "real_alias": c.real_alias, "acting": c.acting,
-            "environments": [{"id": e.id, "name": e.name, "ready": deps.env_for(e.id).is_cloned()}
-                             for e in settings.environments],
+            "id": c.eff.id,
+            "alias": c.eff_alias,
+            "is_admin": c.real.is_admin,
+            "real_alias": c.real_alias,
+            "acting": c.acting,
+            "environments": [
+                {"id": e.id, "name": e.name, "ready": deps.env_for(e.id).is_cloned()}
+                for e in settings.environments
+            ],
             "can_write": settings.allow_commits,
         }
 
     @app.get("/api/conversations")
-    async def list_conversations(env: str = "", c: Ctx = Depends(ctx)):
+    async def list_conversations(env: str = "", c: Ctx = Depends(ctx)) -> Any:
         if not settings_store.get().environments:
             return []
         return deps.store.list(c.eff.id, pick_env(env))
 
     @app.post("/api/conversations")
-    async def create_conversation(env: str = "", c: Ctx = Depends(ctx)):
+    async def create_conversation(env: str = "", c: Ctx = Depends(ctx)) -> Any:
         conv = deps.store.create(c.eff.id, pick_env(env))
         return {"id": conv["id"]}
 
-    def public(conv: dict, uid: str) -> dict:
+    def public(conv: dict[str, Any], uid: str) -> dict[str, Any]:
         pending = deps.pending.get((uid, conv["id"]))
-        return {**{k: v for k, v in conv.items() if k != "loaded_agents"},
-                "busy": (uid, conv["id"]) in state.running,
-                "question": pending.public() if pending else None}
+        return {
+            **{k: v for k, v in conv.items() if k != "loaded_agents"},
+            "busy": (uid, conv["id"]) in state.running,
+            "question": pending.public() if pending else None,
+        }
 
     @app.get("/api/conversations/{cid}")
-    async def get_conversation(cid: str, c: Ctx = Depends(ctx)):
+    async def get_conversation(cid: str, c: Ctx = Depends(ctx)) -> Any:
         conv = deps.store.load(c.eff.id, cid)
         if conv is None:
             raise HTTPException(404, "not found")
         return public(conv, c.eff.id)
 
     @app.patch("/api/conversations/{cid}")
-    async def rename_conversation(cid: str, body: RenameIn, c: Ctx = Depends(ctx)):
+    async def rename_conversation(cid: str, body: RenameIn, c: Ctx = Depends(ctx)) -> Any:
         conv = deps.store.load(c.eff.id, cid)
         if conv is None:
             raise HTTPException(404, "not found")
@@ -282,7 +322,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return {"title": conv["title"]}
 
     @app.delete("/api/conversations/{cid}")
-    async def delete_conversation(cid: str, c: Ctx = Depends(ctx)):
+    async def delete_conversation(cid: str, c: Ctx = Depends(ctx)) -> Any:
         conv = deps.store.load(c.eff.id, cid)
         if conv is None:
             raise HTTPException(404, "not found")
@@ -292,7 +332,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return {"ok": True}
 
     @app.post("/api/conversations/{cid}/messages")
-    async def post_message(cid: str, body: MessageIn, c: Ctx = Depends(ctx)):
+    async def post_message(cid: str, body: MessageIn, c: Ctx = Depends(ctx)) -> StreamingResponse:
         conv = deps.store.load(c.eff.id, cid)
         if conv is None:
             raise HTTPException(404, "not found")
@@ -300,11 +340,13 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         if key in state.running:
             raise HTTPException(409, "a reply is already being generated")
         state.running.add(key)
-        events: asyncio.Queue = asyncio.Queue()
+        events: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
 
         async def runner() -> None:
             try:
-                async for event in run_turn(deps, c.principal, conv, body.text, body.images, body.lang):
+                async for event in run_turn(
+                    deps, c.principal, conv, body.text, body.images, body.lang
+                ):
                     events.put_nowait(event)
             finally:
                 state.running.discard(key)
@@ -312,22 +354,23 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
 
         spawn(runner())
 
-        async def stream():
+        async def stream() -> AsyncIterator[str]:
             while True:
                 try:
                     event = await asyncio.wait_for(events.get(), 15)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": ping\n\n"
                     continue
                 if event is None:
                     return
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
-        return StreamingResponse(stream(), media_type="text/event-stream",
-                                 headers={"X-Accel-Buffering": "no"})
+        return StreamingResponse(
+            stream(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"}
+        )
 
     @app.post("/api/conversations/{cid}/answer")
-    async def answer_question(cid: str, body: AnswerIn, c: Ctx = Depends(ctx)):
+    async def answer_question(cid: str, body: AnswerIn, c: Ctx = Depends(ctx)) -> Any:
         pending = deps.pending.get((c.eff.id, cid))
         if pending is None or pending.id != body.id:
             raise HTTPException(409, "no such question is waiting")
@@ -337,7 +380,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             raise HTTPException(400, str(exc)) from None
         return {"ok": True}
 
-    def changed_files(conv: dict) -> list[str]:
+    def changed_files(conv: dict[str, Any]) -> list[str]:
         """Paths the assistant wrote in this conversation; the only files offered for download."""
         seen: dict[str, None] = {}
         for message in conv["messages"]:
@@ -346,7 +389,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
                     seen.update(dict.fromkeys(entry.get("changed", [])))
         return list(seen)
 
-    def visible_file(conv: dict, rel: str) -> Path | None:
+    def visible_file(conv: dict[str, Any], rel: str) -> Path | None:
         env = deps.env_for(conv.get("env_id", DEFAULT_ENV_ID))
         if rel not in changed_files(conv) or not env.is_cloned():
             return None
@@ -356,20 +399,20 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             return None
 
     def attachment(data: bytes, filename: str, media_type: str) -> Response:
-        ascii_name = re.sub(r'[^A-Za-z0-9._-]', "_", filename) or "download"
+        ascii_name = re.sub(r"[^A-Za-z0-9._-]", "_", filename) or "download"
         disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
         return Response(data, media_type=media_type, headers={"Content-Disposition": disposition})
 
-    def load_own(c: Ctx, cid: str) -> dict:
+    def load_own(c: Ctx, cid: str) -> dict[str, Any]:
         conv = deps.store.load(c.eff.id, cid)
         if conv is None:
             raise HTTPException(404, "not found")
         return conv
 
     @app.get("/api/conversations/{cid}/files")
-    async def conversation_files(cid: str, c: Ctx = Depends(ctx)):
+    async def conversation_files(cid: str, c: Ctx = Depends(ctx)) -> Any:
         conv = load_own(c, cid)
-        files = []
+        files: list[dict[str, Any]] = []
         for rel in changed_files(conv):
             target = visible_file(conv, rel)
             if target:
@@ -377,16 +420,16 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return files
 
     @app.get("/api/conversations/{cid}/files/{path:path}")
-    async def download_file(cid: str, path: str, c: Ctx = Depends(ctx)):
+    async def download_file(cid: str, path: str, c: Ctx = Depends(ctx)) -> Response:
         target = visible_file(load_own(c, cid), path)
         if target is None:
             raise HTTPException(404, "not found")
         return attachment(target.read_bytes(), Path(path).name, "application/octet-stream")
 
     @app.get("/api/conversations/{cid}/export")
-    async def export_conversation(cid: str, c: Ctx = Depends(ctx)):
+    async def export_conversation(cid: str, c: Ctx = Depends(ctx)) -> Response:
         conv = load_own(c, cid)
-        created = dt.datetime.fromtimestamp(conv.get("created", 0), dt.timezone.utc).strftime("%Y-%m-%d")
+        created = dt.datetime.fromtimestamp(conv.get("created", 0), dt.UTC).strftime("%Y-%m-%d")
         lines = [f"# {conv.get('title') or 'Conversation'}", "", f"{created}", ""]
         for message in conv["messages"]:
             lines += [f"## {c.eff_alias if message['role'] == 'user' else 'Assistant'}", ""]
@@ -396,32 +439,47 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
                 lines += [f"*{len(message['images'])} image(s) attached*", ""]
             if message.get("error"):
                 lines += [f"> Error: {message['error']}", ""]
-            files = list(dict.fromkeys(p for e in message.get("tools", []) if e.get("ok") for p in e.get("changed", [])))
+            files = list(
+                dict.fromkeys(
+                    p for e in message.get("tools", []) if e.get("ok") for p in e.get("changed", [])
+                )
+            )
             if files:
                 lines += ["Files changed: " + ", ".join(f"`{p}`" for p in files), ""]
-        slug = re.sub(r"[^a-z0-9]+", "-", (conv.get("title") or "").lower()).strip("-")[:40] or "conversation"
-        return attachment("\n".join(lines).encode("utf-8"), f"{slug}-{created}.md", "text/markdown; charset=utf-8")
+        slug = (
+            re.sub(r"[^a-z0-9]+", "-", (conv.get("title") or "").lower()).strip("-")[:40]
+            or "conversation"
+        )
+        return attachment(
+            "\n".join(lines).encode("utf-8"), f"{slug}-{created}.md", "text/markdown; charset=utf-8"
+        )
 
     @app.get("/api/family")
-    async def family(c: Ctx = Depends(admin)):
-        return [{"id": u.id, "name": u.name, "alias": alias_of(u), "is_admin": u.is_admin}
-                for u in await state.users.users()]
+    async def family(c: Ctx = Depends(admin)) -> Any:
+        return [
+            {"id": u.id, "name": u.name, "alias": alias_of(u), "is_admin": u.is_admin}
+            for u in await state.users.users()
+        ]
 
     # --- admin -----------------------------------------------------------
 
-    def settings_payload() -> dict:
+    def settings_payload() -> dict[str, Any]:
         s = settings_store.get()
-        return {"environments": [dataclasses.asdict(e) for e in s.environments],
-                "allow_commits": s.allow_commits,
-                "allow_push": s.allow_push, "aliases": s.aliases, "auth_method": s.auth_method,
-                "has_token": bool(settings_store.git_token())}
+        return {
+            "environments": [dataclasses.asdict(e) for e in s.environments],
+            "allow_commits": s.allow_commits,
+            "allow_push": s.allow_push,
+            "aliases": s.aliases,
+            "auth_method": s.auth_method,
+            "has_token": bool(settings_store.git_token()),
+        }
 
     @app.get("/api/admin/settings")
-    async def get_settings(c: Ctx = Depends(admin)):
+    async def get_settings(c: Ctx = Depends(admin)) -> Any:
         return settings_payload()
 
     @app.put("/api/admin/settings")
-    async def put_settings(body: SettingsIn, c: Ctx = Depends(admin)):
+    async def put_settings(body: SettingsIn, c: Ctx = Depends(admin)) -> Any:
         old = settings_store.get()
         old_token = settings_store.git_token()
         environments: list[EnvConfig] = []
@@ -433,20 +491,40 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
                 env_id = item.id if item.id and old.env(item.id) else uuid.uuid4().hex[:8]
                 if any(e.id == env_id for e in environments):
                     raise ValidationError("Duplicate environment")
-                environments.append(EnvConfig(env_id, clean_alias(item.name) or name_from_url(url), url,
-                                              validate_branch(item.branch or "main")))
+                environments.append(
+                    EnvConfig(
+                        env_id,
+                        clean_alias(item.name) or name_from_url(url),
+                        url,
+                        validate_branch(item.branch or "main"),
+                    )
+                )
         except ValidationError as exc:
             raise HTTPException(422, str(exc)) from None
         aliases = {k[:64]: a for k, v in body.aliases.items() if (a := clean_alias(v))}
-        settings_store.save(Settings(environments, body.allow_commits, body.allow_push, aliases,
-                                     auth_method=body.auth_method))
+        settings_store.save(
+            Settings(
+                environments,
+                body.allow_commits,
+                body.allow_push,
+                aliases,
+                auth_method=body.auth_method,
+            )
+        )
         if body.git_token is not None:
             settings_store.set_git_token(body.git_token)
         new = apply_settings()
-        token_changed = (new.auth_method, settings_store.git_token()) != (old.auth_method, old_token)
+        token_changed = (new.auth_method, settings_store.git_token()) != (
+            old.auth_method,
+            old_token,
+        )
         for cfg in new.environments:
             before = old.env(cfg.id)
-            if token_changed or before is None or (before.repo_url, before.branch) != (cfg.repo_url, cfg.branch):
+            if (
+                token_changed
+                or before is None
+                or (before.repo_url, before.branch) != (cfg.repo_url, cfg.branch)
+            ):
                 spawn(sync_now(deps.env_for(cfg.id)))
         for gone in old.environments:
             if new.env(gone.id) is None:
@@ -454,24 +532,31 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return settings_payload()
 
     def remove_checkout(env_id: str) -> None:
-        """Deletes the checkout of a removed environment unless it holds work that exists nowhere else."""
+        """Deletes the checkout of a removed environment unless it holds unique work."""
         gone = deps.env_for(env_id)
         status = gone.status()
         if status["cloned"] and (status["ahead"] or status["pending"]):
-            log.warning("Kept the checkout of removed environment %s: it has unpushed changes", env_id)
+            log.warning(
+                "Kept the checkout of removed environment %s: it has unpushed changes", env_id
+            )
         else:
             shutil.rmtree(gone.path, ignore_errors=True)
         if env_id != DEFAULT_ENV_ID:
             deps.forget_env(env_id)
 
     @app.get("/api/admin/github")
-    async def github_status(c: Ctx = Depends(admin)):
+    async def github_status(c: Ctx = Depends(admin)) -> Any:
         if gh is None:
-            return {"available": False, "logged_in": False, "account": "", "login": {"state": "idle"}}
+            return {
+                "available": False,
+                "logged_in": False,
+                "account": "",
+                "login": {"state": "idle"},
+            }
         return await gh.status()
 
     @app.post("/api/admin/github/login")
-    async def github_login(c: Ctx = Depends(admin)):
+    async def github_login(c: Ctx = Depends(admin)) -> Any:
         if gh is None:
             raise HTTPException(503, "The GitHub CLI is not available")
         try:
@@ -481,14 +566,14 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return await gh.status()
 
     @app.post("/api/admin/github/logout")
-    async def github_logout(c: Ctx = Depends(admin)):
+    async def github_logout(c: Ctx = Depends(admin)) -> Any:
         if gh is None:
             raise HTTPException(503, "The GitHub CLI is not available")
         await gh.logout()
         return await gh.status()
 
     @app.post("/api/admin/sync")
-    async def sync_endpoint(env: str = "", c: Ctx = Depends(admin)):
+    async def sync_endpoint(env: str = "", c: Ctx = Depends(admin)) -> Any:
         target = env_of(pick_env(env))
         try:
             await asyncio.to_thread(target.sync)
@@ -499,7 +584,7 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return await asyncio.to_thread(target.status)
 
     @app.post("/api/admin/push")
-    async def push_endpoint(env: str = "", c: Ctx = Depends(admin)):
+    async def push_endpoint(env: str = "", c: Ctx = Depends(admin)) -> Any:
         target = env_of(pick_env(env))
         try:
             await asyncio.to_thread(target.push)
@@ -509,19 +594,30 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
             raise HTTPException(502, str(exc)) from None
         return await asyncio.to_thread(target.status)
 
-    async def environment_status(cfg: EnvConfig, settings: Settings) -> dict:
+    async def environment_status(cfg: EnvConfig, settings: Settings) -> dict[str, Any]:
         target = deps.env_for(cfg.id)
-        info: dict = {"id": cfg.id, "name": cfg.name, "env": await asyncio.to_thread(target.status),
-                      "rules": None, "warnings": [], "model": None}
+        info: dict[str, Any] = {
+            "id": cfg.id,
+            "name": cfg.name,
+            "env": await asyncio.to_thread(target.status),
+            "rules": None,
+            "warnings": [],
+            "model": None,
+        }
         model = deps.options.default_model
         if target.is_cloned():
             rules = Rules.load(target.path)
             text, front_model = read_root_agents(target.path)
             model = front_model or model
-            info["rules"] = {"hidden": list(rules.hidden_lines), "readonly": list(rules.readonly_lines),
-                             "tools": effective_tools(rules, settings.allow_commits)}
+            info["rules"] = {
+                "hidden": list(rules.hidden_lines),
+                "readonly": list(rules.readonly_lines),
+                "tools": effective_tools(rules, settings.allow_commits),
+            }
             info["warnings"] += list(rules.warnings)
-            info["warnings"] += [f"Unknown tool in .family_assist.yaml: {n}" for n in unknown_tool_names(rules)]
+            info["warnings"] += [
+                f"Unknown tool in .family_assist.yaml: {n}" for n in unknown_tool_names(rules)
+            ]
             if not text:
                 info["warnings"].append("The environment has no root AGENTS.md")
         info["model"] = await deps.ollama.check_model(model)
@@ -530,11 +626,11 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return info
 
     @app.get("/api/admin/deleted")
-    async def deleted_conversations(c: Ctx = Depends(admin)):
+    async def deleted_conversations(c: Ctx = Depends(admin)) -> Any:
         return await asyncio.to_thread(deps.store.list_deleted)
 
     @app.post("/api/admin/deleted/{uid}/{cid}/restore")
-    async def restore_conversation(uid: str, cid: str, c: Ctx = Depends(admin)):
+    async def restore_conversation(uid: str, cid: str, c: Ctx = Depends(admin)) -> Any:
         try:
             ok = deps.store.restore(uid, cid)
         except ValueError:
@@ -544,22 +640,28 @@ def create_app(deps: Deps, users: UserDirectory, *, dev: bool = False, backgroun
         return {"ok": True}
 
     @app.get("/api/admin/status")
-    async def admin_status(c: Ctx = Depends(admin)):
+    async def admin_status(c: Ctx = Depends(admin)) -> Any:
         options = deps.options
         settings = settings_store.get()
         return {
-            "environments": [await environment_status(cfg, settings) for cfg in settings.environments],
-            "options": {"ollama_url": options.ollama_url, "api_key_set": bool(options.ollama_api_key),
-                        "default_model": options.default_model, "vision_model": options.vision_model,
-                        "queue_enabled": options.queue_enabled,
-                        "max_parallel_generations": options.max_parallel_generations},
+            "environments": [
+                await environment_status(cfg, settings) for cfg in settings.environments
+            ],
+            "options": {
+                "ollama_url": options.ollama_url,
+                "api_key_set": bool(options.ollama_api_key),
+                "default_model": options.default_model,
+                "vision_model": options.vision_model,
+                "queue_enabled": options.queue_enabled,
+                "max_parallel_generations": options.max_parallel_generations,
+            },
             "queue": {"running": deps.queue.running, "waiting": deps.queue.waiting},
         }
 
     # --- static ------------------------------------------------------------
 
     @app.get("/")
-    async def index():
+    async def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

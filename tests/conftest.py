@@ -11,7 +11,9 @@ GIT_ID = ["-c", "user.name=Seed", "-c", "user.email=seed@example.com"]
 
 
 def git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", *GIT_ID, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", *GIT_ID, *args], cwd=cwd, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def make_dir_link(link: Path, target: Path) -> None:
@@ -21,7 +23,9 @@ def make_dir_link(link: Path, target: Path) -> None:
     except (OSError, NotImplementedError):
         if os.name != "nt":
             raise
-        subprocess.run(["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True)
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)], check=True, capture_output=True
+        )
 
 
 def write(root: Path, rel: str, text: str) -> None:

@@ -1,4 +1,5 @@
 """Stand-in for the GitHub CLI used by the tests (ASCII output only)."""
+
 import os
 import sys
 import time
@@ -12,23 +13,34 @@ unsupported = set(filter(None, os.environ.get("FAKE_GH_UNSUPPORTED", "").split("
 
 if args[:3] == ["auth", "login", "--help"]:
     print("Flags:")
-    for flag in ["--hostname", "--git-protocol", "--insecure-storage", "--skip-ssh-key", "--web", "--with-token"]:
+    for flag in [
+        "--hostname",
+        "--git-protocol",
+        "--insecure-storage",
+        "--skip-ssh-key",
+        "--web",
+        "--with-token",
+    ]:
         if flag not in unsupported:
             print(f"  {flag}  some description")
     sys.exit(0)
 elif args[:2] == ["auth", "login"]:
     for flag in unsupported:
         if flag in args:
-            print(f"unknown flag: {flag}\n\nUsage:  gh auth login [flags]\n\nFlags:\n"
-                  "  -w, --web   Open a browser to authenticate\n"
-                  "      --with-token   Read token from standard input")
+            print(
+                f"unknown flag: {flag}\n\nUsage:  gh auth login [flags]\n\nFlags:\n"
+                "  -w, --web   Open a browser to authenticate\n"
+                "      --with-token   Read token from standard input"
+            )
             sys.exit(1)
     required = {"--hostname", "github.com", "--web"}
     if not required <= set(args) or os.environ.get("GH_PROMPT_DISABLED") != "1":
         print("unexpected arguments", args)
         sys.exit(2)
     print("! First copy your one-time code: ABCD-1234", flush=True)
-    print("Open this URL to continue in your web browser: https://github.com/login/device", flush=True)
+    print(
+        "Open this URL to continue in your web browser: https://github.com/login/device", flush=True
+    )
     for _ in range(300):
         if (config / "approve").exists():
             hosts.write_text("gho_faketoken")

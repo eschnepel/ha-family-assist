@@ -1,2 +1,7 @@
 -r family_assist/requirements.txt
 pytest>=8
+pytest-cov
+mypy
+pre-commit
+ruff==0.16.4
+types-PyYAML

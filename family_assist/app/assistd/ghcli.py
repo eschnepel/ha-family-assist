@@ -7,9 +7,10 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ _OPTIONAL_LOGIN_FLAGS = (("--git-protocol", "https"), ("--insecure-storage",), (
 
 
 def error_summary(output: str) -> str:
-    """The error message of a failed gh run without the usage text that gh appends to flag errors."""
+    """The error message of a failed gh run without the usage text gh appends to flag errors."""
     lines = []
     for line in output.splitlines():
         if _USAGE_START.match(line):
@@ -51,8 +52,14 @@ class LoginState:
 class GitHubCli:
     """Signs in to GitHub with the `gh` CLI (device flow) and hands out its token to git."""
 
-    def __init__(self, config_dir: Path, *, command: tuple[str, ...] = ("gh",), login_timeout: float = 900.0,
-                 extra_env: dict[str, str] | None = None):
+    def __init__(
+        self,
+        config_dir: Path,
+        *,
+        command: tuple[str, ...] = ("gh",),
+        login_timeout: float = 900.0,
+        extra_env: dict[str, str] | None = None,
+    ):
         self.config_dir = config_dir
         self._command = tuple(command)
         self._login_timeout = login_timeout
@@ -60,7 +67,7 @@ class GitHubCli:
         self.login = LoginState()
         self.on_success: Callable[[], None] | None = None
         self._proc: asyncio.subprocess.Process | None = None
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._cached: tuple[float, str] | None = None
 
     @property
@@ -71,14 +78,29 @@ class GitHubCli:
         keep = ("PATH", "LANG", "SYSTEMROOT", "TEMP", "TMP", "USERPROFILE", "TMPDIR")
         env = {k: os.environ[k] for k in keep if k in os.environ}
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        env.update(GH_CONFIG_DIR=str(self.config_dir), HOME=str(self.config_dir), GH_PROMPT_DISABLED="1",
-                   NO_COLOR="1", GH_NO_UPDATE_NOTIFIER="1", GH_NO_EXTENSION_UPDATE_NOTIFIER="1")
+        env.update(
+            GH_CONFIG_DIR=str(self.config_dir),
+            HOME=str(self.config_dir),
+            GH_PROMPT_DISABLED="1",
+            NO_COLOR="1",
+            GH_NO_UPDATE_NOTIFIER="1",
+            GH_NO_EXTENSION_UPDATE_NOTIFIER="1",
+        )
         env.update(self._extra_env)
         return env
 
-    def _run(self, *args: str, timeout: float = 15.0) -> subprocess.CompletedProcess:
-        return subprocess.run([*self._command, *args], env=self._env(), capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
+    def _run(self, *args: str, timeout: float = 15.0) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [*self._command, *args],
+            check=False,
+            env=self._env(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            stdin=subprocess.DEVNULL,
+        )
 
     def token(self) -> str:
         """Current token, or an empty string when not signed in. Safe to call from any thread."""
@@ -106,16 +128,26 @@ class GitHubCli:
         match = _ACCOUNT_RE.search(proc.stdout + proc.stderr)
         return match.group(1) if match else ""
 
-    async def status(self) -> dict:
-        info = {"available": self.available, "logged_in": False, "account": "", "login": self._login_info()}
+    async def status(self) -> dict[str, Any]:
+        info: dict[str, Any] = {
+            "available": self.available,
+            "logged_in": False,
+            "account": "",
+            "login": self._login_info(),
+        }
         if info["available"]:
             info["logged_in"] = bool(await asyncio.to_thread(self.token))
             if info["logged_in"]:
                 info["account"] = await asyncio.to_thread(self._account)
         return info
 
-    def _login_info(self) -> dict:
-        return {"state": self.login.state, "code": self.login.code, "url": DEVICE_URL, "error": self.login.error}
+    def _login_info(self) -> dict[str, Any]:
+        return {
+            "state": self.login.state,
+            "code": self.login.code,
+            "url": DEVICE_URL,
+            "error": self.login.error,
+        }
 
     def _login_args(self) -> list[str]:
         args = ["auth", "login", "--hostname", HOST, "--web"]
@@ -129,7 +161,7 @@ class GitHubCli:
                 args += [flag, *value]
         return args
 
-    async def start_login(self) -> dict:
+    async def start_login(self) -> dict[str, Any]:
         if not self.available:
             raise GhError("The GitHub CLI is not installed")
         await self.cancel()
@@ -137,8 +169,13 @@ class GitHubCli:
         args = await asyncio.to_thread(self._login_args)
         try:
             self._proc = await asyncio.create_subprocess_exec(
-                *self._command, *args, env=self._env(), stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+                *self._command,
+                *args,
+                env=self._env(),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
         except OSError as exc:
             self.login = LoginState("failed", error=f"Cannot start the GitHub CLI: {exc}"[:200])
             return self._login_info()
@@ -151,8 +188,12 @@ class GitHubCli:
 
     async def _pump(self, proc: asyncio.subprocess.Process, login: LoginState) -> str:
         output = ""
+        stream = proc.stdout
+        if stream is None:
+            await proc.wait()
+            return output
         while True:
-            chunk = await proc.stdout.read(512)
+            chunk = await stream.read(512)
             if not chunk:
                 break
             output += chunk.decode("utf-8", errors="replace")
@@ -166,7 +207,7 @@ class GitHubCli:
     async def _watch(self, proc: asyncio.subprocess.Process, login: LoginState) -> None:
         try:
             output = await asyncio.wait_for(self._pump(proc, login), self._login_timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()
             login.state, login.error = "failed", "The sign-in timed out"
             return
@@ -179,7 +220,9 @@ class GitHubCli:
             if self.on_success:
                 self.on_success()
         else:
-            log.warning("gh auth login failed (exit %s): %s", proc.returncode, output.strip()[-2000:])
+            log.warning(
+                "gh auth login failed (exit %s): %s", proc.returncode, output.strip()[-2000:]
+            )
             login.state, login.error = "failed", error_summary(output)
 
     async def cancel(self) -> None:
