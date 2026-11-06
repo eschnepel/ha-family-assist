@@ -16,7 +16,9 @@ Execution is strictly sequential in the order below (capabilities touch overlapp
 | TASK-0008-delete-chat-cancels-turn | Deleting a Chat cancels its running Turn | todo | TASK-0007-stale-notice | - |
 | TASK-0009-remove-repository-deletes-chats | Removing an Agent Repository deletes its Chats | todo | TASK-0008-delete-chat-cancels-turn | - |
 | TASK-0010-startup-removal-sweep | Interrupted removals finish at startup | todo | TASK-0009-remove-repository-deletes-chats | - |
-| TASK-0011-docs-match-behaviour | Documentation matches behaviour | todo | TASK-0010-startup-removal-sweep | - |
+| TASK-0011-local-agent-repository | Local Agent Repository | todo | TASK-0010-startup-removal-sweep | - |
+| TASK-0012-publish-local-repository | Publish a Local Agent Repository | todo | TASK-0011-local-agent-repository | - |
+| TASK-0013-docs-match-behaviour | Documentation matches behaviour | todo | TASK-0012-publish-local-repository | - |
 
 ## Refinement Log
 

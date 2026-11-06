@@ -53,12 +53,16 @@ _Avoid_: Backlog, job list
 ## Agent Repository
 
 **Agent Repository**:
-A git repository and branch, configured by the Admin, whose `AGENTS.md` and supporting files define how the assistant behaves and what it can read or change. It remains the same Agent Repository when its URL or branch is changed. The Admin may configure several; each Chat belongs to exactly one.
+A git repository and branch with an optional remote, configured by the Admin, whose `AGENTS.md` and supporting files define how the assistant behaves and what it can read or change. It remains the same Agent Repository when its URL or branch is changed. The Admin may configure several; each Chat belongs to exactly one.
 _Avoid_: Agent Environment, agent directory, workspace, project, repo (when meaning the Checkout)
 
 **Checkout**:
 The local working copy of an Agent Repository's branch, which is what the assistant reads and changes.
 _Avoid_: Clone, working directory, local repo
+
+**Local Agent Repository**:
+An Agent Repository that has no remote yet and exists only as its Checkout, started from a built-in starter `AGENTS.md`; it has nothing to Sync or Push and is never Stale.
+_Avoid_: Draft repository, offline repository
 
 **Agent Instructions**:
 The `AGENTS.md` files of an Agent Repository; the root file defines how the assistant behaves, nested ones add guidance for their folder.
@@ -83,8 +87,12 @@ The Admin's switch that allows the assistant to change files in the Checkout, ea
 _Avoid_: Write access, edit mode
 
 **Push Permission**:
-The Admin's switch that allows saved commits to be published to the remote.
+The Admin's switch that allows saved commits to be pushed to the remote.
 _Avoid_: Upload, publish mode
+
+**Publish**:
+The one-time push of a Local Agent Repository's whole history to an empty remote when the Admin provides its URL, whatever Push Permission says; afterwards it is an ordinary Agent Repository.
+_Avoid_: Export, migrate, initial push
 
 **Diverged**:
 The state of an Agent Repository whose local commits and remote branch can no longer be combined automatically; it is flagged to the Admin and nothing is discarded. A Diverged Agent Repository is Stale.

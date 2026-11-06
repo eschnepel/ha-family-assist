@@ -1,6 +1,6 @@
 # ADR Summary (architectural ground truth)
 
-Sources: `docs/adr/0001`-`0004` (all accepted). Where the ADRs are silent, stack and limits come from `REQUIREMENTS.md` and are marked [REQ]. Terms follow `GLOSSARY.md`. This file is attached to every worker's context: keep it short.
+Sources: `docs/adr/0001`-`0005` (0001-0004 accepted; 0005 proposed, marked as such). Where the ADRs are silent, stack and limits come from `REQUIREMENTS.md` and are marked [REQ]. Terms follow `GLOSSARY.md`. This file is attached to every worker's context: keep it short.
 
 ## Tech stack and framework decisions
 
@@ -19,6 +19,7 @@ Sources: `docs/adr/0001`-`0004` (all accepted). Where the ADRs are silent, stack
 - A Turn keeps the System Prompt and Repository Rules it started with; its reads may see newer files after a Sync (0004).
 - Removing an Agent Repository first cancels the running Turns of its Chats (Questions ended, Queue slots released); deleting a single Chat likewise cancels its running Turn instead of being refused; a cancelled Turn is rolled back, leaving no commit and no uncommitted file (0003, amended).
 - Removing an Agent Repository permanently deletes its Checkout and Chats; a removal marker plus a sweep at every startup finishes interrupted deletions; existing orphans are adopted once, only when settings load cleanly and list at least one Agent Repository; `default` is never treated as removed (0003).
+- An Agent Repository may be local (no remote): it starts from a built-in starter `AGENTS.md` and an initial commit, has nothing to Sync or Push and is never Stale. Providing a URL publishes its whole history once to an empty remote only, whatever Push Permission says; the entry keeps its id and Chats (0005, proposed).
 
 ## Non-functional requirements
 
@@ -35,6 +36,7 @@ Sources: `docs/adr/0001`-`0004` (all accepted). Where the ADRs are silent, stack
 - No delete, move or rename Tools in v1 [REQ R5.1]; no SSH deploy keys in v1 [REQ R4.2].
 - No hard reset and no waiting on Turns in Sync (0004).
 - No restore of Chats of a removed Agent Repository (0003).
+- No merge, force or re-clone when publishing a Local Agent Repository; no content import (host directory, archive) in v1; the URL of an Agent Repository that has a remote cannot be cleared (0005, proposed).
 - The App adds no content filter of its own [REQ R4.6].
 
 ## Open items

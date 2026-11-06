@@ -15,7 +15,7 @@ A manual or periodic Sync updates the Checkout in the background while Turns run
 - Given a slow fetch is in progress, When a Turn writes a file or commits, Then neither waits for the fetch.
 - Given a Turn started before a Sync that changed the Agent Instructions or Repository Rules, When the Turn continues, Then it keeps the System Prompt and Repository Rules it started with, and its reads may see newer files.
 - Given no local commits and no pending files, When Sync runs, Then the Checkout equals the remote branch afterwards, reached by fast-forward and never by `git reset --hard`.
-- Given the URL or branch of the Agent Repository changed, and a Turn has pending files or the Checkout holds unpushed commits, When Sync runs, Then it fails with the cause recorded and nothing is deleted.
+- Given an Agent Repository that has a remote and whose URL or branch changed, and a Turn has pending files or the Checkout holds unpushed commits, When Sync runs, Then it fails with the cause recorded and nothing is deleted.
 - Given the admin presses "Sync now", When Sync is busy or fails, Then the request returns promptly with the outcome; there is no "try again shortly" wait.
 
 ## Estimated File / Module Footprint (hint, not a commitment)

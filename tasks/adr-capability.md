@@ -1,6 +1,6 @@
 # ADR Capabilities (Phase 1)
 
-Derived thematically from ADRs 0001-0004 (all accepted, amended 2026-11-04) and `GLOSSARY.md`. The App already exists, so each capability is the **delta** that makes behaviour or vocabulary match the ADRs. Every capability is end-to-end demonstrable, deliberately narrow, and says what it does *not* cover. File structure is not prescribed.
+Derived thematically from ADRs 0001-0004 (accepted, amended 2026-11-04) and the proposed ADR 0005 and `GLOSSARY.md`. The App already exists, so each capability is the **delta** that makes behaviour or vocabulary match the ADRs. Every capability is end-to-end demonstrable, deliberately narrow, and says what it does *not* cover. File structure is not prescribed.
 
 **Unchanged by every capability** (contracts and persisted data): `env_id`, `environments`, `user_id`, the id `default`, the `Current user: <alias>` line, the Tool names, the keys of `.family_assist.yaml`, and the stored layout in `/data`. A data directory written by the previous version must keep loading.
 
@@ -73,13 +73,29 @@ Derived thematically from ADRs 0001-0004 (all accepted, amended 2026-11-04) and 
 - **Demonstrable by:** stop the App mid-removal → restart finishes it; damaged or empty settings → nothing deleted; adoption runs only with clean settings listing at least one Agent Repository; `default` never treated as removed.
 - **ADRs:** 0003 · **Depends on:** CAP-09
 
-## D. Documentation
+## D. Local Agent Repositories
 
-### CAP-11 Documentation matches behaviour
+### CAP-11 Local Agent Repository
 
-- **Outcome:** `REQUIREMENTS.md`, `DOCS.md` and `README.md` describe the accepted behaviour: R4.1, R4.3, R6.3-R6.5 per ADRs 0003/0004; defects R3.5 ("queued" vs 409), R5.2 (`load_skill` in the default Tool Allowlist), R4.4 wording; ADR 0002's no-network rule points to its amendment.
+- **Outcome:** An Admin can add an Agent Repository without a URL. The App creates a Local Agent Repository from a built-in starter `AGENTS.md` and an initial commit; the family can chat with it, Commit Permission works, there is nothing to Sync or Push (never Stale), and removal warns that no remote copy exists.
+- **Demonstrable by:** add a local entry → a Chat follows the starter; an assistant edit becomes a local commit; "Sync now" says nothing to sync; Push is unavailable; clearing the URL of an entry with a remote is refused; removal shows the no-remote-copy warning.
+- **Not covered:** publishing (CAP-12); other content sources (an existing host directory, archive import).
+- **ADRs:** 0005 (proposed), 0003, 0004 · **Depends on:** CAP-10
+
+### CAP-12 Publish a Local Agent Repository
+
+- **Outcome:** Saving the URL of an empty remote for a Local Agent Repository pushes its whole committed history once, automatically and whatever Push Permission says; the entry keeps its id and Chats and becomes an ordinary Agent Repository.
+- **Demonstrable by:** empty remote → history pushed, later Sync and Push behave normally; remote with commits → nothing pushed, merged or forced, URL not stored, reason shown; bad sign-in or network → entry stays local and retry works; pending Turn files untouched.
+- **Not covered:** merging into or forcing over a non-empty remote.
+- **ADRs:** 0005 (proposed), 0004 · **Depends on:** CAP-11
+
+## E. Documentation
+
+### CAP-13 Documentation matches behaviour
+
+- **Outcome:** `REQUIREMENTS.md`, `DOCS.md` and `README.md` describe the accepted behaviour: R4.1, R4.3, R6.3-R6.5 per ADRs 0003/0004; the local Agent Repository and Publish per ADR 0005; defects R3.5 ("queued" vs 409), R5.2 (`load_skill` in the default Tool Allowlist), R4.4 wording; ADR 0002's no-network rule points to its amendment.
 - **Demonstrable by:** a reviewer walks each changed requirement against its capability's tests.
-- **ADRs:** all · **Depends on:** CAP-10
+- **ADRs:** all · **Depends on:** CAP-12
 
 ## Mapping and scope
 
@@ -90,10 +106,13 @@ Derived thematically from ADRs 0001-0004 (all accepted, amended 2026-11-04) and 
 | GF-7 | CAP-07 |
 | GF-9 | CAP-08 |
 | GF-5 | CAP-09, CAP-10 |
-| GF-8 | CAP-11 |
+| Project owner's request at Gate 2 | CAP-11, CAP-12 |
+| GF-8 | CAP-13 |
 
-**Out of scope:** resolving Diverged in the App, documenting the Agent Repository contract (suggestion, undecided), pinning `load_skill` (decided against), restoring Chats of a removed Agent Repository, renaming a Chat while its Turn runs.
+**Out of scope:** resolving Diverged in the App, documenting the Agent Repository contract (suggestion, undecided), pinning `load_skill` (decided against), restoring Chats of a removed Agent Repository, renaming a Chat while its Turn runs, other content sources for a Local Agent Repository (an existing host directory, archive import).
 
 **Order:** strictly as numbered. The renames come first so later work uses final names; all capabilities touch overlapping files, so no parallel execution is planned.
 
-**GATE 1: awaiting human approval.**
+**GATE 1: approved.** Extended before Gate 2 by CAP-11 and CAP-12 at the project owner's request.
+
+**GATE 2: awaiting human approval** (task files `tasks/TASK-0001` to `TASK-0013`).
